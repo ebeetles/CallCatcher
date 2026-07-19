@@ -1,8 +1,10 @@
 import { createContext, useContext, useState } from "react";
-import { Link, NavLink, Route, Routes } from "react-router-dom";
+import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { getDashboardToken, getStatus, setDashboardToken, useLoad } from "./api";
 import type { StatusResponse } from "./types";
-import { Lamp } from "./ui";
+import { Lamp, Spinner, ErrorNote } from "./ui";
+import { AuthProvider, useAuth } from "./auth";
+import { LoginPage, ResetPage, SignupPage } from "./pages/AuthPages";
 import BusinessList from "./pages/BusinessList";
 import BusinessForm from "./pages/BusinessForm";
 import BusinessDetail from "./pages/BusinessDetail";
@@ -44,7 +46,40 @@ function SystemRail({ status }: { status?: StatusResponse }) {
   );
 }
 
-/** Shown when the server has DASHBOARD_TOKEN set and we don't have (or sent a wrong) token. */
+/** Agency identity + sign-out at the bottom of the rail. */
+function AccountRail({ status }: { status?: StatusResponse }) {
+  const { config, signOut } = useAuth();
+  const auth = status?.auth;
+  if (!auth) return null;
+  const onSignOut = async () => {
+    if (config?.authMode === "supabase") await signOut();
+    else {
+      setDashboardToken("");
+      window.location.reload();
+    }
+  };
+  return (
+    <div className="rail-system">
+      <div className="rail-system-title">Account</div>
+      <div className="sysrow" title={auth.email}>
+        <Lamp state="ok" />
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{auth.tenantName}</span>
+      </div>
+      <div className="sysrow">
+        <span className="who" style={{ marginLeft: 0 }}>
+          {auth.plan} plan
+        </span>
+      </div>
+      {config?.authMode !== "open" ? (
+        <button className="btn btn-quiet sm" style={{ marginTop: 6 }} onClick={onSignOut}>
+          Sign out
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Shown in legacy token mode when we don't have (or sent a wrong) DASHBOARD_TOKEN. */
 function TokenGate({ retry }: { retry: () => void }) {
   const [value, setValue] = useState(getDashboardToken());
   return (
@@ -78,7 +113,8 @@ function TokenGate({ retry }: { retry: () => void }) {
   );
 }
 
-export default function App() {
+/** The authenticated operator console (the original app shell). */
+function Console() {
   const { data: status, error, reload } = useLoad(getStatus, []);
   if (error === "unauthorized") return <TokenGate retry={reload} />;
   return (
@@ -103,6 +139,7 @@ export default function App() {
           </nav>
           <div className="rail-spacer" />
           <SystemRail status={status} />
+          <AccountRail status={status} />
         </aside>
         <main className="main">
           <Routes>
@@ -111,9 +148,55 @@ export default function App() {
             <Route path="/b/:id/edit" element={<BusinessForm />} />
             <Route path="/b/:id/:tab?" element={<BusinessDetail />} />
             <Route path="/costs" element={<RateCard />} />
+            {/* Recovery links land here with a live session — show the set-password form. */}
+            <Route path="/reset" element={<ResetPage />} />
+            <Route path="/login" element={<Navigate to="/" replace />} />
+            <Route path="/signup" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
       </div>
     </StatusCtx.Provider>
+  );
+}
+
+function Gate() {
+  const { config, configError, session, sessionReady, retryConfig } = useAuth();
+
+  if (configError) {
+    return (
+      <div className="shell" style={{ alignItems: "center", justifyContent: "center", display: "flex", minHeight: "100vh" }}>
+        <div style={{ maxWidth: 480, width: "100%" }}>
+          <ErrorNote msg={`Can't reach the CallCatcher server: ${configError}`} onRetry={retryConfig} />
+        </div>
+      </div>
+    );
+  }
+  if (!config || !sessionReady) {
+    return (
+      <div className="shell" style={{ alignItems: "center", justifyContent: "center", display: "flex", minHeight: "100vh" }}>
+        <Spinner label="Connecting…" />
+      </div>
+    );
+  }
+
+  if (config.authMode === "supabase" && !session) {
+    return (
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/signup" element={<SignupPage />} />
+        <Route path="/reset" element={<ResetPage />} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    );
+  }
+
+  return <Console />;
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <Gate />
+    </AuthProvider>
   );
 }

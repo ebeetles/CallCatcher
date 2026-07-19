@@ -21,7 +21,21 @@ Plan: [SAAS_PLAN.md](SAAS_PLAN.md). Update this file as work lands; any session 
   - [x] tests: tenancy.test.ts (auth gate, isolation matrix, per-tenant seed, stream tokens,
         admin adoption) — 41 tests green; typecheck clean
   - Deferred to P7 sweep: per-tenant rate-limit keying on chat/extract-website (IP-keyed today)
-- [ ] Phase 2 — Web auth + shell (supabase-js, login/signup/reset, AuthProvider, account menu)
+- [x] **Phase 2 — Web auth + shell** (2026-07-19)
+  - [x] @supabase/supabase-js; AuthProvider fetches /api/public/config at runtime (no new
+        build-time env for Vercel), initializes client, tracks session
+  - [x] api.ts: pluggable async auth-token getter (supabase JWT / dashboard token / none)
+  - [x] Login / Signup (agency name → user_metadata.agency_name) / Reset (request + recovery
+        set-password) pages; check-email states
+  - [x] App split: AuthProvider → Gate (login routes when signed out in supabase mode) →
+        Console (original shell + Account rail w/ tenant name, plan, sign out)
+  - [x] token mode keeps TokenGate; open mode gates nothing
+  - [x] vite proxy target overridable via CC_API_PROXY (dev-alongside-live-server); launch.json
+        gained callcatcher-web-alt-api (proxies to :8788)
+  - [x] Verified in browser: open mode → console w/ Dev Agency rail; supabase mode → sign-in
+        gate + signup page; 401 on bare /api. Tests 41 green, both typechecks clean.
+  - Note: e2e signup against a REAL Supabase project deferred to Phase 7 (needs Elwin's
+    project + keys); API-level JWT flow fully covered by tenancy.test.ts.
 - [ ] Phase 3 — Twilio subaccounts (client refactor, bootstrap creation, per-tenant webhook
       signature validation, numbers/SMS via subaccount, suspend/reactivate)
 - [ ] Phase 4 — Plans + metering + enforcement (plans.ts, entitlements, usage_monthly rollup,

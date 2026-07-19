@@ -194,6 +194,26 @@ export interface Pricing {
   llm: Record<string, LlmRate>;
 }
 
+export type AuthMode = "supabase" | "token" | "open";
+
+/** Unauthenticated bootstrap config (GET /api/public/config). */
+export interface PublicConfig {
+  authMode: AuthMode;
+  supabaseUrl: string;
+  supabaseAnonKey: string;
+}
+
+export interface AuthInfo {
+  mode: AuthMode;
+  email: string;
+  tenantId: string;
+  tenantName: string;
+  plan: string;
+  planStatus: string;
+  trialEndsAt?: string;
+  platformAdmin: boolean;
+}
+
 export interface StatusResponse {
   providers: ProviderStatus;
   defaults: { stt: string; llm: string; tts: string };
@@ -202,6 +222,7 @@ export interface StatusResponse {
   factoryAi: boolean;
   callModels: { anthropic: string; openai: string };
   pricing: Pricing;
+  auth: AuthInfo;
 }
 
 export interface MonthlyEstimate {
