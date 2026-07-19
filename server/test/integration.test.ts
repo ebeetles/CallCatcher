@@ -15,6 +15,11 @@ process.env.DB_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "callcatch
 process.env.PUBLIC_URL = "";
 process.env.TWILIO_ACCOUNT_SID = "";
 process.env.TWILIO_AUTH_TOKEN = "";
+// Explicitly clear Supabase and token env vars so we stay in 'open' mode
+// even when other test files (tenancy.test.ts) pollute the environment.
+process.env.SUPABASE_URL = "";
+process.env.SUPABASE_JWT_SECRET = "";
+process.env.DASHBOARD_TOKEN = "";
 
 let app: any;
 let baseUrl = "";

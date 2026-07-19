@@ -79,8 +79,21 @@ Plan: [SAAS_PLAN.md](SAAS_PLAN.md). Update this file as work lands; any session 
         paywall integration — 60 tests green
   - Elwin setup needed later (SAAS_SETUP.md in P7): Stripe products/prices, webhook endpoint,
     STRIPE_* + APP_URL envs
-- [ ] Phase 6 — Landing page, onboarding empty-state, /admin tenants view
-- [ ] Phase 7 — Docs (README, SAAS_SETUP.md, .env.example), security sweep, e2e verify
+- [x] **Phase 6 — Landing, onboarding, admin** (2026-07-19)
+  - [x] Landing page (web/src/pages/Landing.tsx): hero call-ticket, how-it-works, live
+        pricing from /api/public/config, CTA → signup
+  - [x] /admin tenants view (AdminPage.tsx + routes/admin.ts): roster w/ plan, usage,
+        suspend/reactivate (platform_admin only)
+  - [x] Onboarding empty-state (BusinessList.tsx): first-time setup panel — 3 lamp-tracked
+        steps (create business → configure receptionist → put on a number) w/ progress
+        indicator, links, Learn-more row; keeps Create/Seed-demo actions
+- [ ] **Phase 7 — Docs, security sweep, e2e verify** (docs landed 2026-07-19)
+  - [x] SAAS_SETUP.md: Supabase/Stripe/Twilio setup, dev-vs-prod, go-live checklist,
+        architecture diagram, env reference table, troubleshooting
+  - [x] README: SaaS setup section (multi-tenant overview → SAAS_SETUP.md / SAAS_PLAN.md)
+  - [x] .env.example audited — already covers every config.ts var; no Phase 6/7 additions
+  - [ ] Security sweep + full e2e browser verify (signup → business → call → usage → billing)
+  - [ ] Deferred from P1: per-tenant rate-limit keying on chat/extract-website
 
 ## Notes / decisions log
 

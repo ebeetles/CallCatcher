@@ -60,6 +60,21 @@ Try it without a phone:
    webhook (`$PUBLIC_URL/twilio/voice`) automatically.
 4. Call the number.
 
+## SaaS setup (multi-tenant)
+
+Everything above runs CallCatcher as a single-operator console. It also runs as a
+**multi-tenant SaaS**: agencies sign up with **Supabase Auth**, every `/api` route is scoped
+to their tenant, each tenant gets an isolated **Twilio subaccount** for its numbers, usage is
+metered per month, and **Stripe** handles subscriptions (Starter/Pro/Scale + 14-day trial)
+via Checkout, the customer portal, and webhooks. One server + one SQLite file serves all
+tenants; with no keys configured, everything still works in open dev mode.
+
+- **[SAAS_SETUP.md](SAAS_SETUP.md)** — full setup guide: Supabase project, Stripe
+  products/prices + webhook, Twilio subaccounts, env reference, go-live checklist,
+  troubleshooting.
+- **[SAAS_PLAN.md](SAAS_PLAN.md)** — architecture, locked decisions, and the phase-by-phase
+  build plan.
+
 ## Dashboard tour
 
 | Page | What you do there |
