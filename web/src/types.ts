@@ -211,6 +211,7 @@ export interface PublicConfig {
   authMode: AuthMode;
   supabaseUrl: string;
   supabaseAnonKey: string;
+  billingEnabled: boolean;
   plans: PublicPlan[];
 }
 
@@ -234,6 +235,7 @@ export interface AuthInfo {
   trialEndsAt?: string;
   platformAdmin: boolean;
   usage: UsageSummary;
+  billing: { enabled: boolean; hasAccount: boolean; currentPeriodEnd?: string };
 }
 
 export interface UsageResponse {

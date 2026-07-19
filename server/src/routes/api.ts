@@ -16,6 +16,7 @@ import type { HistoryItem } from "../providers/types.ts";
 import { mintStreamToken } from "../security.ts";
 import { currentMonth, usage } from "../db.ts";
 import { entitlements, entitlementSummary, PLANS, PUBLIC_PLAN_IDS } from "../plans.ts";
+import { billingEnabled } from "../billing/stripe.ts";
 
 /** Tenant visibility of the authenticated request (auth hook guarantees req.auth). */
 function scopeOf(req: FastifyRequest): TenantScope {
@@ -115,6 +116,7 @@ export function registerApiRoutes(app: FastifyInstance) {
     authMode: authMode(),
     supabaseUrl: config.supabaseUrl,
     supabaseAnonKey: config.supabaseAnonKey,
+    billingEnabled: billingEnabled(),
     plans: PUBLIC_PLAN_IDS.map((id) => {
       const p = PLANS[id];
       return {
@@ -153,6 +155,11 @@ export function registerApiRoutes(app: FastifyInstance) {
         trialEndsAt: auth.tenant.trialEndsAt,
         platformAdmin: auth.platformAdmin,
         usage: entitlementSummary(auth.tenant),
+        billing: {
+          enabled: billingEnabled(),
+          hasAccount: !!auth.tenant.stripeCustomerId,
+          currentPeriodEnd: auth.tenant.currentPeriodEnd,
+        },
       },
     };
   });

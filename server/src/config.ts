@@ -56,6 +56,18 @@ export const config = {
 
   /** 64-hex-char key for AES-256-GCM encryption of stored secrets (subaccount tokens). */
   secretsKey: process.env.SECRETS_KEY || "",
+
+  // ---------- billing (Stripe) ----------
+  stripeSecretKey: process.env.STRIPE_SECRET_KEY || "",
+  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || "",
+  /** Stripe price ids for the purchasable tiers (create in Stripe → Products). */
+  stripePrices: {
+    starter: process.env.STRIPE_PRICE_STARTER || "",
+    pro: process.env.STRIPE_PRICE_PRO || "",
+    scale: process.env.STRIPE_PRICE_SCALE || "",
+  } as Record<string, string>,
+  /** Dashboard origin for Stripe redirect URLs (falls back to PUBLIC_URL). */
+  appUrl: (process.env.APP_URL || process.env.PUBLIC_URL || "").replace(/\/$/, ""),
   /** Extra browser origins allowed by CORS (comma-separated). localhost + PUBLIC_URL are always allowed. */
   allowedOrigins: (process.env.ALLOWED_ORIGINS || "")
     .split(",")

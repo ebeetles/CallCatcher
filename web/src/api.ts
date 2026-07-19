@@ -97,6 +97,10 @@ const jsonBody = (data: unknown): RequestInit => ({ method: "POST", body: JSON.s
 export const getPublicConfig = () => api<PublicConfig>("/api/public/config");
 export const getStatus = () => api<StatusResponse>("/api/status");
 export const getUsage = () => api<UsageResponse>("/api/usage");
+
+// ---------- billing ----------
+export const startCheckout = (plan: string) => api<{ url: string }>("/api/billing/checkout", jsonBody({ plan }));
+export const openBillingPortal = () => api<{ url: string }>("/api/billing/portal", { method: "POST", body: "{}" });
 export const getVoices = () => api<Record<string, Array<{ id: string; label: string }>>>("/api/voices");
 export const getEstimate = (q: { callsPerDay: number; avgCallMinutes: number; llmModel: string; ttsProvider: string }) =>
   api<MonthlyEstimate>(

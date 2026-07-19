@@ -7,6 +7,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { authMode, config, REPO_ROOT } from "./config.ts";
 import { registerApiRoutes } from "./routes/api.ts";
+import { registerBillingRoutes } from "./routes/billing.ts";
 import { registerTwilioRoutes } from "./routes/twilio.ts";
 import { CallSession, type SessionDeps } from "./voice/session.ts";
 import { businesses, receptionists, tenants } from "./db.ts";
@@ -103,6 +104,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   });
 
   registerApiRoutes(app);
+  registerBillingRoutes(app);
   registerTwilioRoutes(app);
 
   /** Resolve session deps from the stream's start message (Twilio or web dialer). */
@@ -155,6 +157,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       if (
         req.raw.url?.startsWith("/api") ||
         req.raw.url?.startsWith("/twilio") ||
+        req.raw.url?.startsWith("/stripe") ||
         req.raw.url?.startsWith("/media-stream")
       ) {
         return reply.code(404).send({ error: "not found" });

@@ -64,7 +64,21 @@ Plan: [SAAS_PLAN.md](SAAS_PLAN.md). Update this file as work lands; any session 
         buttons land in P5), nav links
   - [x] plans.test.ts: catalog, cap 402, rollup, webhook minute-block, trial-expiry lockout,
         upgrade unlock — 55 tests green; fake-call verified e2e in browser w/ usage rollup
-- [ ] Phase 5 — Stripe (checkout, portal, webhook sync, billing page, tests)
+- [x] **Phase 5 — Stripe billing** (2026-07-19)
+  - [x] billing/stripe.ts: checkout sessions (customer reuse, plan metadata, promo codes),
+        customer portal, webhook event sync (checkout.completed, subscription.updated/deleted
+        → plan/plan_status/period mirror; price-id → plan map from STRIPE_PRICE_* envs)
+  - [x] subaccount suspend on cancellation, reactivate on resubscribe
+  - [x] routes: POST /api/billing/checkout + /portal; POST /stripe/webhook in an encapsulated
+        raw-body scope (signature verified over exact bytes; not under /api auth — the
+        signature is the auth); graceful 501s when unconfigured
+  - [x] /api/public/config.billingEnabled + status.auth.billing {enabled,hasAccount,periodEnd}
+  - [x] BillingPage: live checkout/portal buttons, checkout=success/canceled banners,
+        trial countdown, inactive-plan reactivation prompt, unconfigured explainer
+  - [x] billing.test.ts: signature rejection, lifecycle sync matrix, customer-id fallback,
+        paywall integration — 60 tests green
+  - Elwin setup needed later (SAAS_SETUP.md in P7): Stripe products/prices, webhook endpoint,
+    STRIPE_* + APP_URL envs
 - [ ] Phase 6 — Landing page, onboarding empty-state, /admin tenants view
 - [ ] Phase 7 — Docs (README, SAAS_SETUP.md, .env.example), security sweep, e2e verify
 
