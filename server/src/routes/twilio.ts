@@ -1,8 +1,10 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { config } from "../config.ts";
-import { businesses, phoneNumbers, receptionists } from "../db.ts";
-import { escapeXml } from "../telephony/twilio.ts";
+import { businesses, phoneNumbers, receptionists, tenants } from "../db.ts";
+import { escapeXml, tenantAuthToken } from "../telephony/twilio.ts";
 import { maskPhone, mintStreamToken, validateTwilioSignature } from "../security.ts";
+import { entitlements } from "../plans.ts";
+import type { BusinessProfile, TenantRecord } from "../types.ts";
 
 /** Build the wss:// URL Twilio should stream call audio to. */
 function streamUrl(req: { headers: Record<string, any> }): string {
@@ -23,11 +25,24 @@ function requestUrl(req: FastifyRequest): string {
   return `${proto}://${host}${pathAndQuery}`;
 }
 
-/** Reject webhooks that don't carry a valid Twilio signature (when we can verify one). */
-function verifyTwilio(req: FastifyRequest): boolean {
-  if (!config.twilioAuthToken) return true; // no token configured — nothing to verify against (dev)
+/** The business + tenant that own the number a webhook is about (its To). */
+function resolveCallee(body: Record<string, string>): { business?: BusinessProfile; tenant?: TenantRecord } {
+  const numberRec = body.To ? phoneNumbers.byE164(body.To) : undefined;
+  const business = numberRec ? businesses.get(numberRec.businessId) : undefined;
+  const tenant = business?.tenantId ? tenants.get(business.tenantId) : undefined;
+  return { business, tenant };
+}
+
+/**
+ * Reject webhooks that don't carry a valid Twilio signature (when we can
+ * verify one). Numbers owned by a tenant subaccount are signed with THAT
+ * subaccount's auth token; everything else with the master token.
+ */
+function verifyTwilio(req: FastifyRequest, tenant: TenantRecord | undefined): boolean {
+  const authToken = tenantAuthToken(tenant) ?? config.twilioAuthToken;
+  if (!authToken) return true; // no token configured — nothing to verify against (dev)
   return validateTwilioSignature({
-    authToken: config.twilioAuthToken,
+    authToken,
     url: requestUrl(req),
     params: (req.body ?? {}) as Record<string, string>,
     signature: req.headers["x-twilio-signature"] as string | undefined,
@@ -40,13 +55,12 @@ export function registerTwilioRoutes(app: FastifyInstance) {
    * we answer with TwiML that opens a bidirectional media stream to us.
    */
   app.post("/twilio/voice", async (req, reply) => {
-    if (!verifyTwilio(req)) return reply.code(403).send({ error: "invalid twilio signature" });
     const body = (req.body ?? {}) as Record<string, string>;
+    const { business, tenant } = resolveCallee(body);
+    if (!verifyTwilio(req, tenant)) return reply.code(403).send({ error: "invalid twilio signature" });
     const to = body.To ?? "";
     const from = body.From ?? "";
 
-    const numberRec = to ? phoneNumbers.byE164(to) : undefined;
-    const business = numberRec ? businesses.get(numberRec.businessId) : undefined;
     const receptionist = business ? receptionists.activeForBusiness(business.id) : undefined;
 
     reply.type("text/xml");
@@ -56,8 +70,21 @@ export function registerTwilioRoutes(app: FastifyInstance) {
 <Response><Say>This number is not configured yet. Goodbye.</Say><Hangup/></Response>`;
     }
 
+    // Plan enforcement: inactive plans and exhausted minute caps answer with a
+    // polite unavailable message instead of burning STT/LLM/TTS spend.
+    if (tenant) {
+      const ent = entitlements(tenant);
+      if (!ent.active || ent.minutesExhausted) {
+        console.warn(
+          `[twilio] blocking call to ${maskPhone(to)} — tenant ${tenant.id} ${!ent.active ? ent.blockedReason : "minutes exhausted"}`
+        );
+        return `<?xml version="1.0" encoding="UTF-8"?>
+<Response><Say>We're sorry — this line is temporarily unavailable. Please call again later.</Say><Hangup/></Response>`;
+      }
+    }
+
     // One-time token proving the media stream comes from this verified webhook.
-    const streamToken = mintStreamToken();
+    const streamToken = mintStreamToken({ businessId: business.id, web: false });
 
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -73,8 +100,8 @@ export function registerTwilioRoutes(app: FastifyInstance) {
 
   /** Call status callbacks (optional wiring; useful for logs). */
   app.post("/twilio/status", async (req, reply) => {
-    if (!verifyTwilio(req)) return reply.code(403).send({ error: "invalid twilio signature" });
     const body = (req.body ?? {}) as Record<string, string>;
+    if (!verifyTwilio(req, resolveCallee(body).tenant)) return reply.code(403).send({ error: "invalid twilio signature" });
     if (body.CallStatus) {
       console.log(`[twilio] call ${body.CallSid ?? "?"} status: ${body.CallStatus}`);
     }

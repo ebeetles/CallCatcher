@@ -28,26 +28,36 @@ export function validateTwilioSignature(opts: {
 }
 
 // ---------- one-time media-stream tokens ----------
-// /twilio/voice mints one per verified webhook and embeds it in the TwiML
-// <Parameter>; the media-stream start handler consumes it. In-memory is fine:
-// the stream connects within seconds, from the same process.
+// Each token authorizes ONE stream for ONE business. Phone path: /twilio/voice
+// mints one per verified webhook and embeds it in the TwiML <Parameter>. Web
+// path: POST /api/businesses/:id/stream-token mints one for the authenticated
+// tenant's dialer. In-memory is fine: the stream connects within seconds, from
+// the same process.
 
-const streamTokens = new Map<string, number>(); // token -> expiresAt (ms)
+export interface StreamGrant {
+  businessId: string;
+  /** True when minted for a browser/CLI test dialer rather than a phone call. */
+  web: boolean;
+}
 
-export function mintStreamToken(ttlMs = 5 * 60_000): string {
+const streamTokens = new Map<string, StreamGrant & { expiresAt: number }>();
+
+export function mintStreamToken(grant: StreamGrant, ttlMs = 5 * 60_000): string {
   const now = Date.now();
-  for (const [t, exp] of streamTokens) if (exp < now) streamTokens.delete(t);
+  for (const [t, g] of streamTokens) if (g.expiresAt < now) streamTokens.delete(t);
   const token = randomBytes(16).toString("hex");
-  streamTokens.set(token, now + ttlMs);
+  streamTokens.set(token, { ...grant, expiresAt: now + ttlMs });
   return token;
 }
 
-export function consumeStreamToken(token: string | undefined): boolean {
-  if (!token) return false;
-  const exp = streamTokens.get(token);
-  if (exp === undefined) return false;
+/** Single-use: returns the grant and burns the token, or undefined. */
+export function consumeStreamToken(token: string | undefined): StreamGrant | undefined {
+  if (!token) return undefined;
+  const g = streamTokens.get(token);
+  if (!g) return undefined;
   streamTokens.delete(token);
-  return exp >= Date.now();
+  if (g.expiresAt < Date.now()) return undefined;
+  return { businessId: g.businessId, web: g.web };
 }
 
 // ---------- log redaction ----------

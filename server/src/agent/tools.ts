@@ -1,7 +1,7 @@
 import type { ToolCall, ToolDef } from "../providers/types.ts";
-import { appointments, messages, phoneNumbers } from "../db.ts";
+import { appointments, messages, phoneNumbers, tenants } from "../db.ts";
 import type { BusinessProfile } from "../types.ts";
-import { sendSms, twilioConfigured } from "../telephony/twilio.ts";
+import { tenantTwilio } from "../telephony/twilio.ts";
 import { maskPhone } from "../security.ts";
 
 export const TOOL_DEFS: Record<string, ToolDef> = {
@@ -92,13 +92,18 @@ function toE164(raw: string | undefined): string | undefined {
  * call or stop the caller from hearing their confirmation.
  */
 function notifyOwner(ctx: ToolExecutionContext, body: string): void {
-  if (!ctx.notify || !twilioConfigured()) return;
+  if (!ctx.notify) return;
   if (ctx.business.notifySms === false) return;
+  // Send from the business's own line, through its tenant's Twilio account.
+  const tenant = ctx.business.tenantId ? tenants.get(ctx.business.tenantId) : undefined;
+  const client = tenantTwilio(tenant);
+  if (!client) return;
   const to = toE164(ctx.business.notifyNumber || ctx.business.forwardNumber);
   const from = phoneNumbers.forBusiness(ctx.business.id)?.e164;
   if (!to || !from) return;
   console.log(`[notify] sending owner SMS ${maskPhone(from)} -> ${maskPhone(to)}`);
-  sendSms(from, to, body)
+  client
+    .sendSms(from, to, body)
     .then(() => console.log("[notify] SMS sent"))
     .catch((err) => console.error(`[notify] SMS to owner failed:`, err?.message ?? err));
 }

@@ -12,10 +12,12 @@ import type {
   OwnedNumber,
   PhoneNumberRecord,
   PromptPreview,
+  PublicConfig,
   ReceptionistConfig,
   ReceptionistDraft,
   StatusResponse,
   TranscriptTurn,
+  UsageResponse,
 } from "./types";
 
 export class ApiError extends Error {
@@ -26,17 +28,25 @@ export class ApiError extends Error {
   }
 }
 
-// ---------- dashboard access token ----------
-// Sent as a Bearer token on every request; only required when the server has
-// DASHBOARD_TOKEN set (tokenless local dev keeps working without one).
+// ---------- auth token ----------
+// Every request carries a Bearer token: a Supabase access JWT (supabase mode),
+// the ops DASHBOARD_TOKEN (legacy token mode), or nothing (open local dev).
+// The AuthProvider swaps in the Supabase getter at startup; the default reads
+// the stored dashboard token so token mode works before React mounts.
 const TOKEN_KEY = "cc_dashboard_token";
 export const getDashboardToken = (): string => localStorage.getItem(TOKEN_KEY) ?? "";
 export const setDashboardToken = (t: string): void => {
   if (t) localStorage.setItem(TOKEN_KEY, t);
   else localStorage.removeItem(TOKEN_KEY);
 };
-const authHeaders = (): Record<string, string> => {
-  const t = getDashboardToken();
+
+let authTokenGetter: () => string | Promise<string> = getDashboardToken;
+export function setAuthTokenGetter(fn: () => string | Promise<string>): void {
+  authTokenGetter = fn;
+}
+
+const authHeaders = async (): Promise<Record<string, string>> => {
+  const t = await authTokenGetter();
   return t ? { authorization: `Bearer ${t}` } : {};
 };
 
@@ -68,7 +78,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
       // Fastify 400s on a JSON content-type with an empty body, so only set it when there is one.
       headers: {
-        ...authHeaders(),
+        ...(await authHeaders()),
         ...(init?.body !== undefined ? { "content-type": "application/json" } : {}),
         ...(init?.headers ?? {}),
       },
@@ -84,7 +94,31 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 const jsonBody = (data: unknown): RequestInit => ({ method: "POST", body: JSON.stringify(data) });
 
 // ---------- meta ----------
+export const getPublicConfig = () => api<PublicConfig>("/api/public/config");
 export const getStatus = () => api<StatusResponse>("/api/status");
+export const getUsage = () => api<UsageResponse>("/api/usage");
+
+// ---------- billing ----------
+export const startCheckout = (plan: string) => api<{ url: string }>("/api/billing/checkout", jsonBody({ plan }));
+export const openBillingPortal = () => api<{ url: string }>("/api/billing/portal", { method: "POST", body: "{}" });
+
+// ---------- platform admin ----------
+export interface AdminTenant {
+  id: string;
+  name: string;
+  plan: string;
+  planStatus: string;
+  createdAt: string;
+  trialEndsAt?: string;
+  currentPeriodEnd?: string;
+  twilioSubaccountSid?: string;
+  stripeCustomerId?: string;
+  businesses: number;
+  month: { calls: number; seconds: number; estCostUsd: number };
+}
+export const adminListTenants = () => api<AdminTenant[]>("/api/admin/tenants");
+export const adminSetTenantStatus = (id: string, action: "suspend" | "reactivate") =>
+  api<{ ok: true }>(`/api/admin/tenants/${id}/${action}`, { method: "POST", body: "{}" });
 export const getVoices = () => api<Record<string, Array<{ id: string; label: string }>>>("/api/voices");
 export const getEstimate = (q: { callsPerDay: number; avgCallMinutes: number; llmModel: string; ttsProvider: string }) =>
   api<MonthlyEstimate>(
@@ -145,7 +179,7 @@ export async function streamChat(
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/businesses/${bizId}/chat`, {
     method: "POST",
-    headers: { ...authHeaders(), "content-type": "application/json" },
+    headers: { ...(await authHeaders()), "content-type": "application/json" },
     body: JSON.stringify({ history }),
     signal,
   });

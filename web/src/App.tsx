@@ -1,12 +1,18 @@
 import { createContext, useContext, useState } from "react";
-import { Link, NavLink, Route, Routes } from "react-router-dom";
+import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { getDashboardToken, getStatus, setDashboardToken, useLoad } from "./api";
 import type { StatusResponse } from "./types";
-import { Lamp } from "./ui";
+import { Lamp, Spinner, ErrorNote } from "./ui";
+import { AuthProvider, useAuth } from "./auth";
+import { LoginPage, ResetPage, SignupPage } from "./pages/AuthPages";
 import BusinessList from "./pages/BusinessList";
 import BusinessForm from "./pages/BusinessForm";
 import BusinessDetail from "./pages/BusinessDetail";
 import RateCard from "./pages/RateCard";
+import UsagePage from "./pages/UsagePage";
+import BillingPage from "./pages/BillingPage";
+import AdminPage from "./pages/AdminPage";
+import Landing from "./pages/Landing";
 
 const StatusCtx = createContext<{ status?: StatusResponse; reload: () => void }>({ reload: () => {} });
 
@@ -44,7 +50,40 @@ function SystemRail({ status }: { status?: StatusResponse }) {
   );
 }
 
-/** Shown when the server has DASHBOARD_TOKEN set and we don't have (or sent a wrong) token. */
+/** Agency identity + sign-out at the bottom of the rail. */
+function AccountRail({ status }: { status?: StatusResponse }) {
+  const { config, signOut } = useAuth();
+  const auth = status?.auth;
+  if (!auth) return null;
+  const onSignOut = async () => {
+    if (config?.authMode === "supabase") await signOut();
+    else {
+      setDashboardToken("");
+      window.location.reload();
+    }
+  };
+  return (
+    <div className="rail-system">
+      <div className="rail-system-title">Account</div>
+      <div className="sysrow" title={auth.email}>
+        <Lamp state="ok" />
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{auth.tenantName}</span>
+      </div>
+      <div className="sysrow">
+        <span className="who" style={{ marginLeft: 0 }}>
+          {auth.plan} plan
+        </span>
+      </div>
+      {config?.authMode !== "open" ? (
+        <button className="btn btn-quiet sm" style={{ marginTop: 6 }} onClick={onSignOut}>
+          Sign out
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Shown in legacy token mode when we don't have (or sent a wrong) DASHBOARD_TOKEN. */
 function TokenGate({ retry }: { retry: () => void }) {
   const [value, setValue] = useState(getDashboardToken());
   return (
@@ -78,9 +117,66 @@ function TokenGate({ retry }: { retry: () => void }) {
   );
 }
 
-export default function App() {
+/** One-line plan/usage warnings pinned above the page content. */
+function UsageBanner({ status }: { status?: StatusResponse }) {
+  const u = status?.auth?.usage;
+  if (!u || !u.active) return null;
+  const percent = u.includedMinutes ? Math.round((u.minutesUsed / u.includedMinutes) * 100) : 0;
+  if (u.minutesExhausted) {
+    return (
+      <div className="note err" style={{ marginBottom: 14 }}>
+        Included minutes exhausted — inbound calls hear an unavailable message. <Link to="/billing">Upgrade</Link> to
+        keep answering.
+      </div>
+    );
+  }
+  if (u.includedMinutes && percent >= 80) {
+    return (
+      <div className="note err" style={{ marginBottom: 14 }}>
+        {percent}% of this month's {u.includedMinutes} included minutes used. <Link to="/billing">Upgrade</Link> before
+        calls pause.
+      </div>
+    );
+  }
+  if (u.trialDaysLeft !== undefined && u.trialDaysLeft <= 3) {
+    return (
+      <div className="note" style={{ marginBottom: 14 }}>
+        Your trial ends in {u.trialDaysLeft} day{u.trialDaysLeft === 1 ? "" : "s"} — <Link to="/billing">pick a plan</Link>{" "}
+        to keep your receptionists live.
+      </div>
+    );
+  }
+  return null;
+}
+
+/** Full-screen lock when the plan is inactive (expired trial, canceled, suspended). */
+function Paywall({ status }: { status: StatusResponse }) {
+  const reason = status.auth.usage.blockedReason;
+  const copy: Record<string, string> = {
+    trial_expired: "Your 14-day trial has ended. Your businesses, receptionists, and call history are all saved — pick a plan to switch them back on.",
+    canceled: "Your subscription is canceled. Pick a plan to reactivate your receptionists.",
+    past_due: "Your last payment failed. Update billing to keep your receptionists answering.",
+    suspended: "This account is suspended. Contact support to resolve it.",
+  };
+  return (
+    <div className="empty" style={{ marginTop: 40 }}>
+      <div className="empty-dial">● ● ●</div>
+      <h3>{reason === "trial_expired" ? "Trial ended" : "Plan inactive"}</h3>
+      <p>{copy[reason ?? ""] ?? "Your plan is inactive."}</p>
+      <div className="actions">
+        <Link to="/billing" className="btn btn-primary">
+          Choose a plan
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/** The authenticated operator console (the original app shell). */
+function Console() {
   const { data: status, error, reload } = useLoad(getStatus, []);
   if (error === "unauthorized") return <TokenGate retry={reload} />;
+  const locked = status ? !status.auth.usage.active && !status.auth.platformAdmin : false;
   return (
     <StatusCtx.Provider value={{ status, reload }}>
       <div className="shell">
@@ -94,26 +190,98 @@ export default function App() {
             <NavLink to="/" end className={({ isActive }) => `navlink${isActive ? " active" : ""}`}>
               Businesses
             </NavLink>
+            <NavLink to="/usage" className={({ isActive }) => `navlink${isActive ? " active" : ""}`}>
+              Usage
+            </NavLink>
+            <NavLink to="/billing" className={({ isActive }) => `navlink${isActive ? " active" : ""}`}>
+              Billing
+            </NavLink>
             <NavLink to="/costs" className={({ isActive }) => `navlink${isActive ? " active" : ""}`}>
               Rate card
             </NavLink>
             <NavLink to="/new" className={({ isActive }) => `navlink${isActive ? " active" : ""}`}>
               New business
             </NavLink>
+            {status?.auth.platformAdmin ? (
+              <NavLink to="/admin" className={({ isActive }) => `navlink${isActive ? " active" : ""}`}>
+                Tenants
+              </NavLink>
+            ) : null}
           </nav>
           <div className="rail-spacer" />
           <SystemRail status={status} />
+          <AccountRail status={status} />
         </aside>
         <main className="main">
-          <Routes>
-            <Route path="/" element={<BusinessList />} />
-            <Route path="/new" element={<BusinessForm />} />
-            <Route path="/b/:id/edit" element={<BusinessForm />} />
-            <Route path="/b/:id/:tab?" element={<BusinessDetail />} />
-            <Route path="/costs" element={<RateCard />} />
-          </Routes>
+          <UsageBanner status={status} />
+          {locked && status ? (
+            <Routes>
+              {/* Billing (to pay) and account recovery stay reachable when locked. */}
+              <Route path="/billing" element={<BillingPage />} />
+              <Route path="/reset" element={<ResetPage />} />
+              <Route path="*" element={<Paywall status={status} />} />
+            </Routes>
+          ) : (
+            <Routes>
+              <Route path="/" element={<BusinessList />} />
+              <Route path="/new" element={<BusinessForm />} />
+              <Route path="/b/:id/edit" element={<BusinessForm />} />
+              <Route path="/b/:id/:tab?" element={<BusinessDetail />} />
+              <Route path="/costs" element={<RateCard />} />
+              <Route path="/usage" element={<UsagePage />} />
+              <Route path="/billing" element={<BillingPage />} />
+              <Route path="/admin" element={<AdminPage />} />
+              {/* Recovery links land here with a live session — show the set-password form. */}
+              <Route path="/reset" element={<ResetPage />} />
+              <Route path="/login" element={<Navigate to="/" replace />} />
+              <Route path="/signup" element={<Navigate to="/" replace />} />
+            </Routes>
+          )}
         </main>
       </div>
     </StatusCtx.Provider>
+  );
+}
+
+function Gate() {
+  const { config, configError, session, sessionReady, retryConfig } = useAuth();
+
+  if (configError) {
+    return (
+      <div className="shell" style={{ alignItems: "center", justifyContent: "center", display: "flex", minHeight: "100vh" }}>
+        <div style={{ maxWidth: 480, width: "100%" }}>
+          <ErrorNote msg={`Can't reach the CallCatcher server: ${configError}`} onRetry={retryConfig} />
+        </div>
+      </div>
+    );
+  }
+  if (!config || !sessionReady) {
+    return (
+      <div className="shell" style={{ alignItems: "center", justifyContent: "center", display: "flex", minHeight: "100vh" }}>
+        <Spinner label="Connecting…" />
+      </div>
+    );
+  }
+
+  if (config.authMode === "supabase" && !session) {
+    return (
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/signup" element={<SignupPage />} />
+        <Route path="/reset" element={<ResetPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    );
+  }
+
+  return <Console />;
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <Gate />
+    </AuthProvider>
   );
 }

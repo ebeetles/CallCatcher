@@ -34,10 +34,40 @@ export const config = {
   twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || "",
 
   /**
-   * Bearer token required on every /api route (and web test streams) when set.
-   * Leave empty for tokenless local dev; REQUIRED once the server is public.
+   * Ops bearer token: when set, presenting it on /api routes authenticates as
+   * the platform-admin "ops" context (back-compat with pre-SaaS deployments,
+   * break-glass access, and CLI scripts). Tenant users authenticate via
+   * Supabase JWTs instead.
    */
   dashboardToken: process.env.DASHBOARD_TOKEN || "",
+
+  // ---------- SaaS auth (Supabase) ----------
+  /** Supabase project URL, e.g. https://abcd.supabase.co — enables supabase auth mode. */
+  supabaseUrl: (process.env.SUPABASE_URL || "").replace(/\/$/, ""),
+  /** Publishable anon key, served to the dashboard via /api/public/config. */
+  supabaseAnonKey: process.env.SUPABASE_ANON_KEY || "",
+  /** Legacy HS256 JWT secret (older Supabase projects; also how tests mint tokens). */
+  supabaseJwtSecret: process.env.SUPABASE_JWT_SECRET || "",
+  /** Emails that become platform admins and adopt legacy (pre-tenant) businesses. */
+  adminEmails: (process.env.ADMIN_EMAILS || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+
+  /** 64-hex-char key for AES-256-GCM encryption of stored secrets (subaccount tokens). */
+  secretsKey: process.env.SECRETS_KEY || "",
+
+  // ---------- billing (Stripe) ----------
+  stripeSecretKey: process.env.STRIPE_SECRET_KEY || "",
+  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || "",
+  /** Stripe price ids for the purchasable tiers (create in Stripe → Products). */
+  stripePrices: {
+    starter: process.env.STRIPE_PRICE_STARTER || "",
+    pro: process.env.STRIPE_PRICE_PRO || "",
+    scale: process.env.STRIPE_PRICE_SCALE || "",
+  } as Record<string, string>,
+  /** Dashboard origin for Stripe redirect URLs (falls back to PUBLIC_URL). */
+  appUrl: (process.env.APP_URL || process.env.PUBLIC_URL || "").replace(/\/$/, ""),
   /** Extra browser origins allowed by CORS (comma-separated). localhost + PUBLIC_URL are always allowed. */
   allowedOrigins: (process.env.ALLOWED_ORIGINS || "")
     .split(",")
@@ -50,6 +80,21 @@ export const config = {
   /** Model used by the factory to author prompts / extract website info (quality-critical, one-shot). */
   factoryModel: process.env.FACTORY_MODEL || "claude-opus-4-8",
 };
+
+/**
+ * How /api requests authenticate:
+ *  - "supabase": Supabase JWTs required (SUPABASE_URL or SUPABASE_JWT_SECRET set).
+ *    DASHBOARD_TOKEN additionally works as an ops/platform-admin bearer.
+ *  - "token": legacy single-token mode (only DASHBOARD_TOKEN set).
+ *  - "open": nothing configured — local dev auto-authenticates as a dev tenant.
+ */
+export type AuthMode = "supabase" | "token" | "open";
+
+export function authMode(): AuthMode {
+  if (config.supabaseUrl || config.supabaseJwtSecret) return "supabase";
+  if (config.dashboardToken) return "token";
+  return "open";
+}
 
 export interface ProviderStatus {
   stt: { deepgram: boolean; mock: true };

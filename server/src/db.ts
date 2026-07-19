@@ -11,8 +11,10 @@ import type {
   MessageRecord,
   PhoneNumberRecord,
   ReceptionistConfig,
+  TenantRecord,
   TranscriptTurn,
   TurnLatency,
+  UserRecord,
 } from "./types.ts";
 
 fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
@@ -22,6 +24,40 @@ db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 
 db.exec(`
+CREATE TABLE IF NOT EXISTS tenants (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  plan TEXT NOT NULL DEFAULT 'trial',
+  plan_status TEXT NOT NULL DEFAULT 'active',
+  trial_ends_at TEXT,
+  stripe_customer_id TEXT,
+  stripe_subscription_id TEXT,
+  current_period_end TEXT,
+  twilio_subaccount_sid TEXT,
+  twilio_subaccount_token_enc TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'owner',
+  platform_admin INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
+
+CREATE TABLE IF NOT EXISTS usage_monthly (
+  tenant_id TEXT NOT NULL,
+  month TEXT NOT NULL,
+  calls INTEGER NOT NULL DEFAULT 0,
+  seconds INTEGER NOT NULL DEFAULT 0,
+  est_cost_usd REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (tenant_id, month)
+);
+
 CREATE TABLE IF NOT EXISTS businesses (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -128,6 +164,9 @@ function ensureColumn(table: string, column: string, ddl: string): void {
 }
 ensureColumn("businesses", "notify_sms", "notify_sms INTEGER NOT NULL DEFAULT 1");
 ensureColumn("businesses", "notify_number", "notify_number TEXT");
+// NULL tenant_id = legacy row from before multi-tenancy; adopted at admin signup.
+ensureColumn("businesses", "tenant_id", "tenant_id TEXT REFERENCES tenants(id) ON DELETE CASCADE");
+db.exec("CREATE INDEX IF NOT EXISTS idx_businesses_tenant ON businesses(tenant_id)");
 
 export function newId(prefix: string): string {
   return `${prefix}_${crypto.randomBytes(8).toString("hex")}`;
@@ -135,11 +174,112 @@ export function newId(prefix: string): string {
 
 const nowIso = () => new Date().toISOString();
 
+// ---------- Tenants & users ----------
+
+function rowToTenant(r: any): TenantRecord {
+  return {
+    id: r.id,
+    name: r.name,
+    plan: r.plan,
+    planStatus: r.plan_status,
+    trialEndsAt: r.trial_ends_at ?? undefined,
+    stripeCustomerId: r.stripe_customer_id ?? undefined,
+    stripeSubscriptionId: r.stripe_subscription_id ?? undefined,
+    currentPeriodEnd: r.current_period_end ?? undefined,
+    twilioSubaccountSid: r.twilio_subaccount_sid ?? undefined,
+    twilioSubaccountTokenEnc: r.twilio_subaccount_token_enc ?? undefined,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+const TENANT_COLS: Record<string, string> = {
+  name: "name",
+  plan: "plan",
+  planStatus: "plan_status",
+  trialEndsAt: "trial_ends_at",
+  stripeCustomerId: "stripe_customer_id",
+  stripeSubscriptionId: "stripe_subscription_id",
+  currentPeriodEnd: "current_period_end",
+  twilioSubaccountSid: "twilio_subaccount_sid",
+  twilioSubaccountTokenEnc: "twilio_subaccount_token_enc",
+};
+
+export const tenants = {
+  create(input: { id?: string; name: string; plan?: string; trialEndsAt?: string }): TenantRecord {
+    const id = input.id ?? newId("tnt");
+    const now = nowIso();
+    db.prepare(
+      `INSERT INTO tenants (id,name,plan,plan_status,trial_ends_at,created_at,updated_at)
+       VALUES (?,?,?,'active',?,?,?)`
+    ).run(id, input.name, input.plan ?? "trial", input.trialEndsAt ?? null, now, now);
+    return this.get(id)!;
+  },
+
+  get(id: string): TenantRecord | undefined {
+    const r = db.prepare("SELECT * FROM tenants WHERE id=?").get(id);
+    return r ? rowToTenant(r) : undefined;
+  },
+
+  byStripeCustomer(customerId: string): TenantRecord | undefined {
+    const r = db.prepare("SELECT * FROM tenants WHERE stripe_customer_id=?").get(customerId);
+    return r ? rowToTenant(r) : undefined;
+  },
+
+  update(id: string, patch: Partial<Omit<TenantRecord, "id" | "createdAt" | "updatedAt">>): TenantRecord | undefined {
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    for (const [key, col] of Object.entries(TENANT_COLS)) {
+      if (key in patch) {
+        sets.push(`${col}=?`);
+        vals.push((patch as any)[key] ?? null);
+      }
+    }
+    if (sets.length) {
+      db.prepare(`UPDATE tenants SET ${sets.join(",")}, updated_at=? WHERE id=?`).run(...vals, nowIso(), id);
+    }
+    return this.get(id);
+  },
+
+  list(): TenantRecord[] {
+    return db.prepare("SELECT * FROM tenants ORDER BY created_at DESC").all().map(rowToTenant);
+  },
+
+  /** Claim legacy (pre-tenancy) businesses for this tenant. Returns count adopted. */
+  adoptOrphanBusinesses(tenantId: string): number {
+    return db.prepare("UPDATE businesses SET tenant_id=? WHERE tenant_id IS NULL").run(tenantId).changes;
+  },
+};
+
+export const users = {
+  create(input: { id: string; tenantId: string; email: string; role?: UserRecord["role"]; platformAdmin?: boolean }): UserRecord {
+    db.prepare(
+      `INSERT INTO users (id,tenant_id,email,role,platform_admin,created_at) VALUES (?,?,?,?,?,?)`
+    ).run(input.id, input.tenantId, input.email, input.role ?? "owner", input.platformAdmin ? 1 : 0, nowIso());
+    return this.get(input.id)!;
+  },
+
+  get(id: string): UserRecord | undefined {
+    const r = db.prepare("SELECT * FROM users WHERE id=?").get(id) as any;
+    return r
+      ? {
+          id: r.id,
+          tenantId: r.tenant_id,
+          email: r.email,
+          role: r.role,
+          platformAdmin: !!r.platform_admin,
+          createdAt: r.created_at,
+        }
+      : undefined;
+  },
+};
+
 // ---------- Businesses ----------
 
 function rowToBusiness(r: any): BusinessProfile {
   return {
     id: r.id,
+    tenantId: r.tenant_id ?? null,
     name: r.name,
     industry: r.industry,
     description: r.description,
@@ -160,17 +300,33 @@ function rowToBusiness(r: any): BusinessProfile {
   };
 }
 
-export type BusinessInput = Omit<BusinessProfile, "id" | "createdAt" | "updatedAt">;
+export type BusinessInput = Omit<BusinessProfile, "id" | "tenantId" | "createdAt" | "updatedAt">;
+
+/**
+ * Tenant visibility filter: a tenant sees its own rows; platform admins (ops
+ * token, dev mode, ADMIN_EMAILS users) additionally see legacy NULL-tenant rows.
+ */
+export interface TenantScope {
+  tenantId: string;
+  includeOrphans?: boolean;
+}
+
+function scopeWhere(alias: string, scope: TenantScope): { sql: string; params: unknown[] } {
+  return scope.includeOrphans
+    ? { sql: `(${alias}.tenant_id = ? OR ${alias}.tenant_id IS NULL)`, params: [scope.tenantId] }
+    : { sql: `${alias}.tenant_id = ?`, params: [scope.tenantId] };
+}
 
 export const businesses = {
-  create(input: BusinessInput): BusinessProfile {
+  create(input: BusinessInput, tenantId: string | null): BusinessProfile {
     const id = newId("biz");
     const now = nowIso();
     db.prepare(
-      `INSERT INTO businesses (id,name,industry,description,timezone,address,website,email,forward_number,notify_sms,notify_number,hours_json,services_json,faqs_json,policies,notes,created_at,updated_at)
-       VALUES (@id,@name,@industry,@description,@timezone,@address,@website,@email,@forward_number,@notify_sms,@notify_number,@hours_json,@services_json,@faqs_json,@policies,@notes,@created_at,@updated_at)`
+      `INSERT INTO businesses (id,tenant_id,name,industry,description,timezone,address,website,email,forward_number,notify_sms,notify_number,hours_json,services_json,faqs_json,policies,notes,created_at,updated_at)
+       VALUES (@id,@tenant_id,@name,@industry,@description,@timezone,@address,@website,@email,@forward_number,@notify_sms,@notify_number,@hours_json,@services_json,@faqs_json,@policies,@notes,@created_at,@updated_at)`
     ).run({
       id,
+      tenant_id: tenantId,
       name: input.name,
       industry: input.industry,
       description: input.description,
@@ -225,8 +381,24 @@ export const businesses = {
     return r ? rowToBusiness(r) : undefined;
   },
 
-  list(): BusinessProfile[] {
-    return db.prepare("SELECT * FROM businesses ORDER BY created_at DESC").all().map(rowToBusiness);
+  /** get(), but only if the row is visible to this tenant scope. */
+  getScoped(id: string, scope: TenantScope): BusinessProfile | undefined {
+    const w = scopeWhere("businesses", scope);
+    const r = db.prepare(`SELECT * FROM businesses WHERE id=? AND ${w.sql}`).get(id, ...w.params);
+    return r ? rowToBusiness(r) : undefined;
+  },
+
+  list(scope: TenantScope): BusinessProfile[] {
+    const w = scopeWhere("businesses", scope);
+    return db
+      .prepare(`SELECT * FROM businesses WHERE ${w.sql} ORDER BY created_at DESC`)
+      .all(...w.params)
+      .map(rowToBusiness);
+  },
+
+  countForTenant(tenantId: string): number {
+    const r = db.prepare("SELECT COUNT(*) AS n FROM businesses WHERE tenant_id=?").get(tenantId) as any;
+    return r.n;
   },
 
   delete(id: string): void {
@@ -373,9 +545,22 @@ export const calls = {
     db.prepare(
       `UPDATE calls SET ended_at=?, duration_sec=?, status='completed', ended_reason=?, metrics_json=? WHERE id=?`
     ).run(ended.toISOString(), dur, reason, metrics ? JSON.stringify(metrics) : null, id);
+    // Meter the tenant's monthly usage (survives business deletion — billing record).
+    const owner = db
+      .prepare("SELECT b.tenant_id AS t FROM calls c JOIN businesses b ON b.id=c.business_id WHERE c.id=?")
+      .get(id) as { t: string | null } | undefined;
+    if (owner?.t) usage.record(owner.t, dur, metrics?.estimatedCostUsd ?? 0);
   },
   get(id: string): CallRecord | undefined {
     const r = db.prepare("SELECT * FROM calls WHERE id=?").get(id);
+    return r ? rowToCall(r) : undefined;
+  },
+  /** get(), but only if the owning business is visible to this tenant scope. */
+  getScoped(id: string, scope: TenantScope): CallRecord | undefined {
+    const w = scopeWhere("b", scope);
+    const r = db
+      .prepare(`SELECT c.* FROM calls c JOIN businesses b ON b.id=c.business_id WHERE c.id=? AND ${w.sql}`)
+      .get(id, ...w.params);
     return r ? rowToCall(r) : undefined;
   },
   listForBusiness(businessId: string, limit = 100): CallRecord[] {
@@ -394,6 +579,42 @@ export const calls = {
       )
       .get(businessId) as any;
     return { total: r.total, today: r.today ?? 0, totalMinutes: Math.round((r.secs ?? 0) / 60) };
+  },
+};
+
+// ---------- usage metering ----------
+
+/** Current calendar month as 'YYYY-MM' (UTC). */
+export function currentMonth(): string {
+  return new Date().toISOString().slice(0, 7);
+}
+
+export const usage = {
+  record(tenantId: string, seconds: number, estCostUsd: number, month = currentMonth()): void {
+    db.prepare(
+      `INSERT INTO usage_monthly (tenant_id, month, calls, seconds, est_cost_usd) VALUES (?,?,1,?,?)
+       ON CONFLICT(tenant_id, month) DO UPDATE SET
+         calls = calls + 1, seconds = seconds + excluded.seconds, est_cost_usd = est_cost_usd + excluded.est_cost_usd`
+    ).run(tenantId, month, seconds, estCostUsd);
+  },
+
+  month(tenantId: string, month = currentMonth()): { calls: number; seconds: number; estCostUsd: number } {
+    const r = db
+      .prepare("SELECT calls, seconds, est_cost_usd AS estCostUsd FROM usage_monthly WHERE tenant_id=? AND month=?")
+      .get(tenantId, month) as any;
+    return r ?? { calls: 0, seconds: 0, estCostUsd: 0 };
+  },
+
+  /** Per-business breakdown for the month, from the calls table (live view). */
+  perBusinessMonth(tenantId: string, month = currentMonth()): Array<{ businessId: string; name: string; calls: number; seconds: number }> {
+    return db
+      .prepare(
+        `SELECT b.id AS businessId, b.name AS name, COUNT(c.id) AS calls, COALESCE(SUM(c.duration_sec),0) AS seconds
+         FROM businesses b LEFT JOIN calls c ON c.business_id = b.id AND substr(c.started_at,1,7) = ?
+         WHERE b.tenant_id = ?
+         GROUP BY b.id ORDER BY seconds DESC`
+      )
+      .all(month, tenantId) as any;
   },
 };
 
@@ -463,6 +684,13 @@ export const messages = {
   setStatus(id: string, status: MessageRecord["status"]): void {
     db.prepare("UPDATE messages SET status=? WHERE id=?").run(status, id);
   },
+  /** True if the message's owning business is visible to this tenant scope. */
+  isScoped(id: string, scope: TenantScope): boolean {
+    const w = scopeWhere("b", scope);
+    return !!db
+      .prepare(`SELECT 1 FROM messages m JOIN businesses b ON b.id=m.business_id WHERE m.id=? AND ${w.sql}`)
+      .get(id, ...w.params);
+  },
 };
 
 export const appointments = {
@@ -505,5 +733,12 @@ export const appointments = {
   },
   setStatus(id: string, status: AppointmentRequest["status"]): void {
     db.prepare("UPDATE appointments SET status=? WHERE id=?").run(status, id);
+  },
+  /** True if the appointment's owning business is visible to this tenant scope. */
+  isScoped(id: string, scope: TenantScope): boolean {
+    const w = scopeWhere("b", scope);
+    return !!db
+      .prepare(`SELECT 1 FROM appointments a JOIN businesses b ON b.id=a.business_id WHERE a.id=? AND ${w.sql}`)
+      .get(id, ...w.params);
   },
 };
