@@ -53,6 +53,9 @@ export const config = {
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
+
+  /** 64-hex-char key for AES-256-GCM encryption of stored secrets (subaccount tokens). */
+  secretsKey: process.env.SECRETS_KEY || "",
   /** Extra browser origins allowed by CORS (comma-separated). localhost + PUBLIC_URL are always allowed. */
   allowedOrigins: (process.env.ALLOWED_ORIGINS || "")
     .split(",")

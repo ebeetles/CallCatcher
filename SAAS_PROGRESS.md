@@ -36,8 +36,21 @@ Plan: [SAAS_PLAN.md](SAAS_PLAN.md). Update this file as work lands; any session 
         gate + signup page; 401 on bare /api. Tests 41 green, both typechecks clean.
   - Note: e2e signup against a REAL Supabase project deferred to Phase 7 (needs Elwin's
     project + keys); API-level JWT flow fully covered by tenancy.test.ts.
-- [ ] Phase 3 — Twilio subaccounts (client refactor, bootstrap creation, per-tenant webhook
-      signature validation, numbers/SMS via subaccount, suspend/reactivate)
+- [x] **Phase 3 — Twilio subaccounts** (2026-07-19)
+  - [x] crypto.ts: AES-256-GCM secret storage (SECRETS_KEY, 64 hex)
+  - [x] telephony/twilio.ts → credential-parameterized TwilioClient class;
+        platformTwilio() / tenantTwilio(tenant) resolution (subaccount → master fallback)
+  - [x] subaccount lifecycle: createSubaccount + setSubaccountStatus(active|suspended|closed);
+        ensureTenantSubaccount (idempotent, lazy retry at number provisioning);
+        auto-provisioned via tenant-created hook; SKIPPED for plan-"dev" tenants (they run
+        on the master account) and when keys/SECRETS_KEY missing (graceful fallback)
+  - [x] /twilio/voice + /twilio/status validate signatures with the number-owning tenant's
+        subaccount token (master token for legacy/unknown numbers)
+  - [x] number search/provision/attach/owned-numbers + call transfer/hangup + owner SMS all
+        route through tenantTwilio
+  - [x] subaccounts.test.ts (fetch-stubbed Twilio API): encrypted-at-rest, lifecycle,
+        purchase-in-subaccount, per-tenant signature matrix — 49 tests green
+  - Suspend/reactivate invocation wired in P5 (Stripe cancel) + P6 (admin actions)
 - [ ] Phase 4 — Plans + metering + enforcement (plans.ts, entitlements, usage_monthly rollup,
       /api/usage, usage page, caps: 402 + TwiML unavailable, paywall)
 - [ ] Phase 5 — Stripe (checkout, portal, webhook sync, billing page, tests)

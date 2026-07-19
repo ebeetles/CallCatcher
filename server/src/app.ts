@@ -9,10 +9,10 @@ import { authMode, config, REPO_ROOT } from "./config.ts";
 import { registerApiRoutes } from "./routes/api.ts";
 import { registerTwilioRoutes } from "./routes/twilio.ts";
 import { CallSession, type SessionDeps } from "./voice/session.ts";
-import { businesses, receptionists } from "./db.ts";
+import { businesses, receptionists, tenants } from "./db.ts";
 import * as twilio from "./telephony/twilio.ts";
 import { consumeStreamToken, safeEqual } from "./security.ts";
-import { devContext, ensureUser, opsContext, verifySupabaseJwt, type AuthContext } from "./auth.ts";
+import { devContext, ensureUser, opsContext, setTenantCreatedHook, verifySupabaseJwt, type AuthContext } from "./auth.ts";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -42,6 +42,9 @@ function originAllowed(origin: string): boolean {
 
 export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
+
+  // New paying tenants get their own Twilio subaccount (no-op without keys).
+  setTenantCreatedHook(twilio.provisionTenantSubaccount);
 
   // Twilio posts application/x-www-form-urlencoded.
   app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body, done) => {
@@ -124,11 +127,15 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     const business = businesses.get(businessId);
     const receptionist = business ? receptionists.activeForBusiness(businessId) : undefined;
     if (!business || !receptionist) return undefined;
+    // Call control (transfer/hangup) must go through the account that owns the
+    // number — the tenant's subaccount when it has one.
+    const tenant = business.tenantId ? tenants.get(business.tenantId) : undefined;
+    const client = twilio.tenantTwilio(tenant);
     return {
       business,
       receptionist,
-      telephony: twilio.twilioConfigured()
-        ? { transfer: twilio.transferCall, hangup: twilio.hangupCall }
+      telephony: client
+        ? { transfer: (sid, to) => client.transferCall(sid, to), hangup: (sid) => client.hangupCall(sid) }
         : undefined,
       timers: opts.sessionTimers,
     };

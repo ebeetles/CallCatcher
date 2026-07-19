@@ -274,13 +274,16 @@ export function registerApiRoutes(app: FastifyInstance) {
   });
 
   // ---------- numbers ----------
+  // All number operations go through the tenant's Twilio client: its own
+  // subaccount when provisioned, the master account otherwise (dev/legacy).
   app.get("/api/businesses/:id/number/search", async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!scopedBusiness(req, id)) return reply.code(404).send({ error: "not found" });
-    if (!twilio.twilioConfigured()) return reply.code(501).send({ error: "Twilio keys not configured" });
+    const client = twilio.tenantTwilio(req.auth!.tenant);
+    if (!client) return reply.code(501).send({ error: "Twilio keys not configured" });
     const q = req.query as Record<string, string>;
     try {
-      return { numbers: await twilio.searchNumbers({ areaCode: q.areaCode, contains: q.contains }) };
+      return { numbers: await client.searchNumbers({ areaCode: q.areaCode, contains: q.contains }) };
     } catch (err: any) {
       return reply.code(502).send({ error: String(err?.message ?? err) });
     }
@@ -294,7 +297,10 @@ export function registerApiRoutes(app: FastifyInstance) {
     const body = (req.body ?? {}) as { e164?: string };
     if (!body.e164) return reply.code(400).send({ error: "e164 required (pick from /number/search)" });
     try {
-      const bought = await twilio.purchaseNumber(body.e164);
+      // Lazy retry: if subaccount creation failed at signup, try again now.
+      const tenant = await twilio.ensureTenantSubaccount(req.auth!.tenant);
+      const client = twilio.tenantTwilio(tenant)!;
+      const bought = await client.purchaseNumber(body.e164);
       phoneNumbers.upsert({ businessId: id, e164: bought.e164, twilioSid: bought.sid, status: "active" });
       return { ok: true, number: phoneNumbers.forBusiness(id) };
     } catch (err: any) {
@@ -309,9 +315,10 @@ export function registerApiRoutes(app: FastifyInstance) {
     if (!biz) return reply.code(404).send({ error: "business not found" });
     const body = (req.body ?? {}) as { e164?: string; twilioSid?: string };
     if (!body.e164) return reply.code(400).send({ error: "e164 required" });
-    if (body.twilioSid && twilio.twilioConfigured()) {
+    const client = twilio.tenantTwilio(req.auth!.tenant);
+    if (body.twilioSid && client) {
       try {
-        await twilio.configureNumber(body.twilioSid);
+        await client.configureNumber(body.twilioSid);
       } catch (err: any) {
         return reply.code(502).send({ error: String(err?.message ?? err) });
       }
@@ -334,9 +341,10 @@ export function registerApiRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/twilio/owned-numbers", async (req, reply) => {
-    if (!twilio.twilioConfigured()) return reply.code(501).send({ error: "Twilio keys not configured" });
+    const client = twilio.tenantTwilio(req.auth!.tenant);
+    if (!client) return reply.code(501).send({ error: "Twilio keys not configured" });
     try {
-      return { numbers: await twilio.listOwnedNumbers() };
+      return { numbers: await client.listOwnedNumbers() };
     } catch (err: any) {
       return reply.code(502).send({ error: String(err?.message ?? err) });
     }
