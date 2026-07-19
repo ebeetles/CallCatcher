@@ -9,6 +9,8 @@ import BusinessList from "./pages/BusinessList";
 import BusinessForm from "./pages/BusinessForm";
 import BusinessDetail from "./pages/BusinessDetail";
 import RateCard from "./pages/RateCard";
+import UsagePage from "./pages/UsagePage";
+import BillingPage from "./pages/BillingPage";
 
 const StatusCtx = createContext<{ status?: StatusResponse; reload: () => void }>({ reload: () => {} });
 
@@ -113,10 +115,66 @@ function TokenGate({ retry }: { retry: () => void }) {
   );
 }
 
+/** One-line plan/usage warnings pinned above the page content. */
+function UsageBanner({ status }: { status?: StatusResponse }) {
+  const u = status?.auth?.usage;
+  if (!u || !u.active) return null;
+  const percent = u.includedMinutes ? Math.round((u.minutesUsed / u.includedMinutes) * 100) : 0;
+  if (u.minutesExhausted) {
+    return (
+      <div className="note err" style={{ marginBottom: 14 }}>
+        Included minutes exhausted — inbound calls hear an unavailable message. <Link to="/billing">Upgrade</Link> to
+        keep answering.
+      </div>
+    );
+  }
+  if (u.includedMinutes && percent >= 80) {
+    return (
+      <div className="note err" style={{ marginBottom: 14 }}>
+        {percent}% of this month's {u.includedMinutes} included minutes used. <Link to="/billing">Upgrade</Link> before
+        calls pause.
+      </div>
+    );
+  }
+  if (u.trialDaysLeft !== undefined && u.trialDaysLeft <= 3) {
+    return (
+      <div className="note" style={{ marginBottom: 14 }}>
+        Your trial ends in {u.trialDaysLeft} day{u.trialDaysLeft === 1 ? "" : "s"} — <Link to="/billing">pick a plan</Link>{" "}
+        to keep your receptionists live.
+      </div>
+    );
+  }
+  return null;
+}
+
+/** Full-screen lock when the plan is inactive (expired trial, canceled, suspended). */
+function Paywall({ status }: { status: StatusResponse }) {
+  const reason = status.auth.usage.blockedReason;
+  const copy: Record<string, string> = {
+    trial_expired: "Your 14-day trial has ended. Your businesses, receptionists, and call history are all saved — pick a plan to switch them back on.",
+    canceled: "Your subscription is canceled. Pick a plan to reactivate your receptionists.",
+    past_due: "Your last payment failed. Update billing to keep your receptionists answering.",
+    suspended: "This account is suspended. Contact support to resolve it.",
+  };
+  return (
+    <div className="empty" style={{ marginTop: 40 }}>
+      <div className="empty-dial">● ● ●</div>
+      <h3>{reason === "trial_expired" ? "Trial ended" : "Plan inactive"}</h3>
+      <p>{copy[reason ?? ""] ?? "Your plan is inactive."}</p>
+      <div className="actions">
+        <Link to="/billing" className="btn btn-primary">
+          Choose a plan
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 /** The authenticated operator console (the original app shell). */
 function Console() {
   const { data: status, error, reload } = useLoad(getStatus, []);
   if (error === "unauthorized") return <TokenGate retry={reload} />;
+  const locked = status ? !status.auth.usage.active && !status.auth.platformAdmin : false;
   return (
     <StatusCtx.Provider value={{ status, reload }}>
       <div className="shell">
@@ -130,6 +188,12 @@ function Console() {
             <NavLink to="/" end className={({ isActive }) => `navlink${isActive ? " active" : ""}`}>
               Businesses
             </NavLink>
+            <NavLink to="/usage" className={({ isActive }) => `navlink${isActive ? " active" : ""}`}>
+              Usage
+            </NavLink>
+            <NavLink to="/billing" className={({ isActive }) => `navlink${isActive ? " active" : ""}`}>
+              Billing
+            </NavLink>
             <NavLink to="/costs" className={({ isActive }) => `navlink${isActive ? " active" : ""}`}>
               Rate card
             </NavLink>
@@ -142,17 +206,29 @@ function Console() {
           <AccountRail status={status} />
         </aside>
         <main className="main">
-          <Routes>
-            <Route path="/" element={<BusinessList />} />
-            <Route path="/new" element={<BusinessForm />} />
-            <Route path="/b/:id/edit" element={<BusinessForm />} />
-            <Route path="/b/:id/:tab?" element={<BusinessDetail />} />
-            <Route path="/costs" element={<RateCard />} />
-            {/* Recovery links land here with a live session — show the set-password form. */}
-            <Route path="/reset" element={<ResetPage />} />
-            <Route path="/login" element={<Navigate to="/" replace />} />
-            <Route path="/signup" element={<Navigate to="/" replace />} />
-          </Routes>
+          <UsageBanner status={status} />
+          {locked && status ? (
+            <Routes>
+              {/* Billing (to pay) and account recovery stay reachable when locked. */}
+              <Route path="/billing" element={<BillingPage />} />
+              <Route path="/reset" element={<ResetPage />} />
+              <Route path="*" element={<Paywall status={status} />} />
+            </Routes>
+          ) : (
+            <Routes>
+              <Route path="/" element={<BusinessList />} />
+              <Route path="/new" element={<BusinessForm />} />
+              <Route path="/b/:id/edit" element={<BusinessForm />} />
+              <Route path="/b/:id/:tab?" element={<BusinessDetail />} />
+              <Route path="/costs" element={<RateCard />} />
+              <Route path="/usage" element={<UsagePage />} />
+              <Route path="/billing" element={<BillingPage />} />
+              {/* Recovery links land here with a live session — show the set-password form. */}
+              <Route path="/reset" element={<ResetPage />} />
+              <Route path="/login" element={<Navigate to="/" replace />} />
+              <Route path="/signup" element={<Navigate to="/" replace />} />
+            </Routes>
+          )}
         </main>
       </div>
     </StatusCtx.Provider>

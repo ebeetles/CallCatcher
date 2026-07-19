@@ -545,6 +545,11 @@ export const calls = {
     db.prepare(
       `UPDATE calls SET ended_at=?, duration_sec=?, status='completed', ended_reason=?, metrics_json=? WHERE id=?`
     ).run(ended.toISOString(), dur, reason, metrics ? JSON.stringify(metrics) : null, id);
+    // Meter the tenant's monthly usage (survives business deletion — billing record).
+    const owner = db
+      .prepare("SELECT b.tenant_id AS t FROM calls c JOIN businesses b ON b.id=c.business_id WHERE c.id=?")
+      .get(id) as { t: string | null } | undefined;
+    if (owner?.t) usage.record(owner.t, dur, metrics?.estimatedCostUsd ?? 0);
   },
   get(id: string): CallRecord | undefined {
     const r = db.prepare("SELECT * FROM calls WHERE id=?").get(id);
@@ -574,6 +579,42 @@ export const calls = {
       )
       .get(businessId) as any;
     return { total: r.total, today: r.today ?? 0, totalMinutes: Math.round((r.secs ?? 0) / 60) };
+  },
+};
+
+// ---------- usage metering ----------
+
+/** Current calendar month as 'YYYY-MM' (UTC). */
+export function currentMonth(): string {
+  return new Date().toISOString().slice(0, 7);
+}
+
+export const usage = {
+  record(tenantId: string, seconds: number, estCostUsd: number, month = currentMonth()): void {
+    db.prepare(
+      `INSERT INTO usage_monthly (tenant_id, month, calls, seconds, est_cost_usd) VALUES (?,?,1,?,?)
+       ON CONFLICT(tenant_id, month) DO UPDATE SET
+         calls = calls + 1, seconds = seconds + excluded.seconds, est_cost_usd = est_cost_usd + excluded.est_cost_usd`
+    ).run(tenantId, month, seconds, estCostUsd);
+  },
+
+  month(tenantId: string, month = currentMonth()): { calls: number; seconds: number; estCostUsd: number } {
+    const r = db
+      .prepare("SELECT calls, seconds, est_cost_usd AS estCostUsd FROM usage_monthly WHERE tenant_id=? AND month=?")
+      .get(tenantId, month) as any;
+    return r ?? { calls: 0, seconds: 0, estCostUsd: 0 };
+  },
+
+  /** Per-business breakdown for the month, from the calls table (live view). */
+  perBusinessMonth(tenantId: string, month = currentMonth()): Array<{ businessId: string; name: string; calls: number; seconds: number }> {
+    return db
+      .prepare(
+        `SELECT b.id AS businessId, b.name AS name, COUNT(c.id) AS calls, COALESCE(SUM(c.duration_sec),0) AS seconds
+         FROM businesses b LEFT JOIN calls c ON c.business_id = b.id AND substr(c.started_at,1,7) = ?
+         WHERE b.tenant_id = ?
+         GROUP BY b.id ORDER BY seconds DESC`
+      )
+      .all(month, tenantId) as any;
   },
 };
 

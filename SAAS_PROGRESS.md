@@ -51,8 +51,19 @@ Plan: [SAAS_PLAN.md](SAAS_PLAN.md). Update this file as work lands; any session 
   - [x] subaccounts.test.ts (fetch-stubbed Twilio API): encrypted-at-rest, lifecycle,
         purchase-in-subaccount, per-tenant signature matrix — 49 tests green
   - Suspend/reactivate invocation wired in P5 (Stripe cancel) + P6 (admin actions)
-- [ ] Phase 4 — Plans + metering + enforcement (plans.ts, entitlements, usage_monthly rollup,
-      /api/usage, usage page, caps: 402 + TwiML unavailable, paywall)
+- [x] **Phase 4 — Plans + metering + enforcement** (2026-07-19)
+  - [x] plans.ts: trial/starter/pro/scale/dev tiers + entitlements() + entitlementSummary()
+  - [x] usage accessor (usage_monthly upsert) fed by calls.end() via business→tenant join;
+        perBusinessMonth breakdown; GET /api/usage; usage summary in /api/status auth block
+  - [x] enforcement: business cap 402 (create + seed-demo), inactive plan 402 on
+        chat/stream-token/create, inbound calls blocked w/ polite TwiML when inactive OR
+        minutes exhausted; dashboard reads never blocked (data isn't hostage)
+  - [x] /api/public/config exposes the purchasable plan catalog
+  - [x] web: Usage page (stats, meter bar, per-business table), UsageBanner (80%/exhausted/
+        trial-ending), Paywall lock (billing+reset stay reachable), Billing page stub (Stripe
+        buttons land in P5), nav links
+  - [x] plans.test.ts: catalog, cap 402, rollup, webhook minute-block, trial-expiry lockout,
+        upgrade unlock — 55 tests green; fake-call verified e2e in browser w/ usage rollup
 - [ ] Phase 5 — Stripe (checkout, portal, webhook sync, billing page, tests)
 - [ ] Phase 6 — Landing page, onboarding empty-state, /admin tenants view
 - [ ] Phase 7 — Docs (README, SAAS_SETUP.md, .env.example), security sweep, e2e verify

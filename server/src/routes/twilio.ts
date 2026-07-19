@@ -3,6 +3,7 @@ import { config } from "../config.ts";
 import { businesses, phoneNumbers, receptionists, tenants } from "../db.ts";
 import { escapeXml, tenantAuthToken } from "../telephony/twilio.ts";
 import { maskPhone, mintStreamToken, validateTwilioSignature } from "../security.ts";
+import { entitlements } from "../plans.ts";
 import type { BusinessProfile, TenantRecord } from "../types.ts";
 
 /** Build the wss:// URL Twilio should stream call audio to. */
@@ -67,6 +68,19 @@ export function registerTwilioRoutes(app: FastifyInstance) {
       console.warn(`[twilio] call to unrecognized number ${maskPhone(to)}`);
       return `<?xml version="1.0" encoding="UTF-8"?>
 <Response><Say>This number is not configured yet. Goodbye.</Say><Hangup/></Response>`;
+    }
+
+    // Plan enforcement: inactive plans and exhausted minute caps answer with a
+    // polite unavailable message instead of burning STT/LLM/TTS spend.
+    if (tenant) {
+      const ent = entitlements(tenant);
+      if (!ent.active || ent.minutesExhausted) {
+        console.warn(
+          `[twilio] blocking call to ${maskPhone(to)} — tenant ${tenant.id} ${!ent.active ? ent.blockedReason : "minutes exhausted"}`
+        );
+        return `<?xml version="1.0" encoding="UTF-8"?>
+<Response><Say>We're sorry — this line is temporarily unavailable. Please call again later.</Say><Hangup/></Response>`;
+      }
     }
 
     // One-time token proving the media stream comes from this verified webhook.

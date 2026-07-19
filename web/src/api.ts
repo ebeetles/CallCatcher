@@ -17,6 +17,7 @@ import type {
   ReceptionistDraft,
   StatusResponse,
   TranscriptTurn,
+  UsageResponse,
 } from "./types";
 
 export class ApiError extends Error {
@@ -95,6 +96,7 @@ const jsonBody = (data: unknown): RequestInit => ({ method: "POST", body: JSON.s
 // ---------- meta ----------
 export const getPublicConfig = () => api<PublicConfig>("/api/public/config");
 export const getStatus = () => api<StatusResponse>("/api/status");
+export const getUsage = () => api<UsageResponse>("/api/usage");
 export const getVoices = () => api<Record<string, Array<{ id: string; label: string }>>>("/api/voices");
 export const getEstimate = (q: { callsPerDay: number; avgCallMinutes: number; llmModel: string; ttsProvider: string }) =>
   api<MonthlyEstimate>(

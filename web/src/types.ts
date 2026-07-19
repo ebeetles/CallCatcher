@@ -196,11 +196,32 @@ export interface Pricing {
 
 export type AuthMode = "supabase" | "token" | "open";
 
+export interface PublicPlan {
+  id: string;
+  label: string;
+  priceUsd: number;
+  maxBusinesses: number;
+  includedMinutes: number;
+  elevenlabs: boolean;
+  blurb: string;
+}
+
 /** Unauthenticated bootstrap config (GET /api/public/config). */
 export interface PublicConfig {
   authMode: AuthMode;
   supabaseUrl: string;
   supabaseAnonKey: string;
+  plans: PublicPlan[];
+}
+
+export interface UsageSummary {
+  active: boolean;
+  blockedReason?: "trial_expired" | "past_due" | "canceled" | "suspended";
+  minutesUsed: number;
+  includedMinutes: number | null;
+  minutesExhausted: boolean;
+  maxBusinesses: number | null;
+  trialDaysLeft?: number;
 }
 
 export interface AuthInfo {
@@ -212,6 +233,17 @@ export interface AuthInfo {
   planStatus: string;
   trialEndsAt?: string;
   platformAdmin: boolean;
+  usage: UsageSummary;
+}
+
+export interface UsageResponse {
+  month: string;
+  plan: { id: string; label: string; includedMinutes: number | null; maxBusinesses: number | null };
+  active: boolean;
+  blockedReason?: string;
+  trialDaysLeft?: number;
+  totals: { calls: number; minutes: number; estCostUsd: number };
+  perBusiness: Array<{ businessId: string; name: string; calls: number; minutes: number }>;
 }
 
 export interface StatusResponse {

@@ -14,6 +14,8 @@ import * as twilio from "../telephony/twilio.ts";
 import { extractFromWebsite, factoryAiAvailable, refinePrompt } from "../ai/factory.ts";
 import type { HistoryItem } from "../providers/types.ts";
 import { mintStreamToken } from "../security.ts";
+import { currentMonth, usage } from "../db.ts";
+import { entitlements, entitlementSummary, PLANS, PUBLIC_PLAN_IDS } from "../plans.ts";
 
 /** Tenant visibility of the authenticated request (auth hook guarantees req.auth). */
 function scopeOf(req: FastifyRequest): TenantScope {
@@ -24,6 +26,27 @@ function scopeOf(req: FastifyRequest): TenantScope {
 /** Load a business only if the requester's tenant may see it (404 otherwise — never leak existence). */
 function scopedBusiness(req: FastifyRequest, id: string) {
   return businesses.getScoped(id, scopeOf(req));
+}
+
+const BLOCKED_COPY: Record<string, string> = {
+  trial_expired: "Your free trial has ended. Pick a plan to keep your receptionists answering.",
+  canceled: "Your subscription is canceled. Pick a plan to reactivate your receptionists.",
+  suspended: "This account is suspended. Contact support.",
+  past_due: "Your last payment failed. Update your billing details to keep service running.",
+};
+
+/** 402 when the tenant's plan is inactive. Returns the entitlements otherwise. */
+function requireActivePlan(req: FastifyRequest, reply: any) {
+  const ent = entitlements(req.auth!.tenant);
+  if (!ent.active) {
+    reply.code(402).send({
+      error: BLOCKED_COPY[ent.blockedReason ?? ""] ?? "Your plan is inactive.",
+      code: "plan_inactive",
+      blockedReason: ent.blockedReason,
+    });
+    return undefined;
+  }
+  return ent;
 }
 
 const HoursSchema = z.record(
@@ -87,11 +110,23 @@ export function registerApiRoutes(app: FastifyInstance) {
   // ---------- public (no auth; see PUBLIC_API_PATHS in app.ts) ----------
   app.get("/api/health", async () => ({ ok: true }));
 
-  /** Bootstrap config for the web app: which auth mode, and how to reach Supabase. */
+  /** Bootstrap config for the web app: auth mode, Supabase coordinates, and plan catalog. */
   app.get("/api/public/config", async () => ({
     authMode: authMode(),
     supabaseUrl: config.supabaseUrl,
     supabaseAnonKey: config.supabaseAnonKey,
+    plans: PUBLIC_PLAN_IDS.map((id) => {
+      const p = PLANS[id];
+      return {
+        id: p.id,
+        label: p.label,
+        priceUsd: p.priceUsd,
+        maxBusinesses: p.maxBusinesses,
+        includedMinutes: p.includedMinutes,
+        elevenlabs: p.elevenlabs,
+        blurb: p.blurb,
+      };
+    }),
   }));
 
   // ---------- meta ----------
@@ -117,7 +152,39 @@ export function registerApiRoutes(app: FastifyInstance) {
         planStatus: auth.tenant.planStatus,
         trialEndsAt: auth.tenant.trialEndsAt,
         platformAdmin: auth.platformAdmin,
+        usage: entitlementSummary(auth.tenant),
       },
+    };
+  });
+
+  // ---------- usage ----------
+  app.get("/api/usage", async (req) => {
+    const tenant = req.auth!.tenant;
+    const ent = entitlements(tenant);
+    const month = currentMonth();
+    const totals = usage.month(tenant.id);
+    return {
+      month,
+      plan: {
+        id: ent.plan.id,
+        label: ent.plan.label,
+        includedMinutes: ent.plan.includedMinutes === Number.POSITIVE_INFINITY ? null : ent.plan.includedMinutes,
+        maxBusinesses: ent.plan.maxBusinesses === Number.POSITIVE_INFINITY ? null : ent.plan.maxBusinesses,
+      },
+      active: ent.active,
+      blockedReason: ent.blockedReason,
+      trialDaysLeft: ent.trialDaysLeft,
+      totals: {
+        calls: totals.calls,
+        minutes: Math.round(totals.seconds / 60),
+        estCostUsd: Math.round(totals.estCostUsd * 100) / 100,
+      },
+      perBusiness: usage.perBusinessMonth(tenant.id).map((b) => ({
+        businessId: b.businessId,
+        name: b.name,
+        calls: b.calls,
+        minutes: Math.round(b.seconds / 60),
+      })),
     };
   });
 
@@ -139,6 +206,14 @@ export function registerApiRoutes(app: FastifyInstance) {
   );
 
   app.post("/api/businesses", async (req, reply) => {
+    const ent = requireActivePlan(req, reply);
+    if (!ent) return;
+    if (businesses.countForTenant(req.auth!.tenant.id) >= ent.plan.maxBusinesses) {
+      return reply.code(402).send({
+        error: `Your ${ent.plan.label} plan includes ${ent.plan.maxBusinesses} business${ent.plan.maxBusinesses === 1 ? "" : "es"}. Upgrade to add more.`,
+        code: "plan_limit",
+      });
+    }
     const parsed = BusinessSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
     const input: BusinessInput = { ...parsed.data, hours: parsed.data.hours ?? defaultHours() } as BusinessInput;
@@ -254,6 +329,7 @@ export function registerApiRoutes(app: FastifyInstance) {
   app.post("/api/businesses/:id/stream-token", async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!scopedBusiness(req, id)) return reply.code(404).send({ error: "not found" });
+    if (!requireActivePlan(req, reply)) return;
     return { token: mintStreamToken({ businessId: id, web: true }), expiresInSec: 300 };
   });
 
@@ -397,6 +473,8 @@ export function registerApiRoutes(app: FastifyInstance) {
     const biz = scopedBusiness(req, id);
     const rcp = biz ? receptionists.activeForBusiness(id) : undefined;
     if (!biz || !rcp) return reply.code(404).send({ error: "business or receptionist not found" });
+    // Over-minutes tenants may still test-chat (evaluation path); inactive plans may not.
+    if (!requireActivePlan(req, reply)) return;
 
     const body = (req.body ?? {}) as { history?: Array<{ role: string; text: string }> };
     const history: HistoryItem[] = (body.history ?? [])
@@ -443,9 +521,14 @@ export function registerApiRoutes(app: FastifyInstance) {
   });
 
   // ---------- demo seed ----------
-  app.post("/api/seed-demo", async (req) => {
+  app.post("/api/seed-demo", async (req, reply) => {
     const existing = businesses.list(scopeOf(req)).find((b) => b.name === "Sunrise Dental Studio");
     if (existing) return businessSummary(existing.id);
+    const ent = requireActivePlan(req, reply);
+    if (!ent) return;
+    if (businesses.countForTenant(req.auth!.tenant.id) >= ent.plan.maxBusinesses) {
+      return reply.code(402).send({ error: `Your ${ent.plan.label} plan is at its business limit.`, code: "plan_limit" });
+    }
     const biz = businesses.create({
       name: "Sunrise Dental Studio",
       industry: "dental clinic",
