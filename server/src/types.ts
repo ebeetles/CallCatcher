@@ -23,8 +23,39 @@ export interface Faq {
   answer: string;
 }
 
+/** An agency account. Every dashboard user belongs to exactly one tenant. */
+export interface TenantRecord {
+  id: string;
+  name: string;
+  /** Plan id from plans.ts: trial | starter | pro | scale | dev */
+  plan: string;
+  /** active | past_due | canceled | trial_expired | suspended */
+  planStatus: string;
+  trialEndsAt?: string;
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
+  currentPeriodEnd?: string;
+  twilioSubaccountSid?: string;
+  /** AES-256-GCM ciphertext of the subaccount auth token (SECRETS_KEY). */
+  twilioSubaccountTokenEnc?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserRecord {
+  /** Supabase auth user id (sub claim); "dev"/"ops" for the non-supabase contexts. */
+  id: string;
+  tenantId: string;
+  email: string;
+  role: "owner" | "member";
+  platformAdmin: boolean;
+  createdAt: string;
+}
+
 export interface BusinessProfile {
   id: string;
+  /** Owning tenant. null = legacy row from before multi-tenancy (visible to platform admins). */
+  tenantId: string | null;
   name: string;
   industry: string;
   description: string;

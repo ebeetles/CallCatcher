@@ -40,6 +40,18 @@ async function main() {
     console.log(`Calling ${target.name} (${businessId})…\n`);
   }
 
+  // Single-use stream token (required unless the server runs in fully-open dev mode).
+  let streamToken = "";
+  const tokenRes = await fetch(`${base}/api/businesses/${businessId}/stream-token`, {
+    method: "POST",
+    headers: authHeaders,
+  });
+  if (tokenRes.ok) {
+    streamToken = ((await tokenRes.json()) as { token: string }).token;
+  } else {
+    console.warn(`  (no stream token: HTTP ${tokenRes.status} — connecting tokenless, works only in open dev mode)`);
+  }
+
   const ws = new WebSocket(`ws://127.0.0.1:${port}/media-stream`);
   let scriptIdx = 0;
   let assistantDone = 0;
@@ -63,7 +75,7 @@ async function main() {
         start: {
           streamSid: "MZfakecli",
           callSid: `CAfake${Date.now()}`,
-          customParameters: { businessId, web: "1", from: "+15550001234", ...(token ? { token } : {}) },
+          customParameters: { businessId, web: "1", from: "+15550001234", ...(streamToken ? { token: streamToken } : {}) },
           mediaFormat: { encoding: "audio/x-mulaw", sampleRate: 8000, channels: 1 },
         },
         streamSid: "MZfakecli",

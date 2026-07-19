@@ -8,6 +8,7 @@ import { defaultHours, type BusinessProfile } from "../src/types.ts";
 function fakeBusiness(): BusinessProfile {
   return {
     id: "biz_test",
+    tenantId: "tnt_test",
     name: "Testly Spa",
     industry: "day spa",
     description: "A relaxing day spa.",

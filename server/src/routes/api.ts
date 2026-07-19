@@ -1,10 +1,10 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { appointments, businesses, calls, messages, phoneNumbers, receptionists, turns } from "../db.ts";
-import type { BusinessInput } from "../db.ts";
+import type { BusinessInput, TenantScope } from "../db.ts";
 import { defaultHours } from "../types.ts";
 import { ALL_TOOLS, buildGreeting, buildSystemPrompt } from "../promptFactory.ts";
-import { config, defaultProviders, providerStatus } from "../config.ts";
+import { authMode, config, defaultProviders, providerStatus } from "../config.ts";
 import { getLlm, listVoices } from "../providers/registry.ts";
 import { runAgentTurn } from "../agent/agentLoop.ts";
 import { executeTool, toolDefsFor } from "../agent/tools.ts";
@@ -13,6 +13,18 @@ import { estimateMonthly, PRICING } from "../costs.ts";
 import * as twilio from "../telephony/twilio.ts";
 import { extractFromWebsite, factoryAiAvailable, refinePrompt } from "../ai/factory.ts";
 import type { HistoryItem } from "../providers/types.ts";
+import { mintStreamToken } from "../security.ts";
+
+/** Tenant visibility of the authenticated request (auth hook guarantees req.auth). */
+function scopeOf(req: FastifyRequest): TenantScope {
+  const auth = req.auth!;
+  return { tenantId: auth.tenant.id, includeOrphans: auth.platformAdmin };
+}
+
+/** Load a business only if the requester's tenant may see it (404 otherwise — never leak existence). */
+function scopedBusiness(req: FastifyRequest, id: string) {
+  return businesses.getScoped(id, scopeOf(req));
+}
 
 const HoursSchema = z.record(
   z.enum(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]),
@@ -72,19 +84,42 @@ function businessSummary(id: string) {
 }
 
 export function registerApiRoutes(app: FastifyInstance) {
-  // ---------- meta ----------
-  app.get("/api/status", async () => ({
-    providers: providerStatus(),
-    defaults: defaultProviders(),
-    publicUrl: config.publicUrl,
-    twilioReady: twilio.twilioConfigured(),
-    factoryAi: factoryAiAvailable(),
-    callModels: {
-      anthropic: config.callModelAnthropic,
-      openai: config.callModelOpenai,
-    },
-    pricing: PRICING,
+  // ---------- public (no auth; see PUBLIC_API_PATHS in app.ts) ----------
+  app.get("/api/health", async () => ({ ok: true }));
+
+  /** Bootstrap config for the web app: which auth mode, and how to reach Supabase. */
+  app.get("/api/public/config", async () => ({
+    authMode: authMode(),
+    supabaseUrl: config.supabaseUrl,
+    supabaseAnonKey: config.supabaseAnonKey,
   }));
+
+  // ---------- meta ----------
+  app.get("/api/status", async (req) => {
+    const auth = req.auth!;
+    return {
+      providers: providerStatus(),
+      defaults: defaultProviders(),
+      publicUrl: config.publicUrl,
+      twilioReady: twilio.twilioConfigured(),
+      factoryAi: factoryAiAvailable(),
+      callModels: {
+        anthropic: config.callModelAnthropic,
+        openai: config.callModelOpenai,
+      },
+      pricing: PRICING,
+      auth: {
+        mode: authMode(),
+        email: auth.user.email,
+        tenantId: auth.tenant.id,
+        tenantName: auth.tenant.name,
+        plan: auth.tenant.plan,
+        planStatus: auth.tenant.planStatus,
+        trialEndsAt: auth.tenant.trialEndsAt,
+        platformAdmin: auth.platformAdmin,
+      },
+    };
+  });
 
   app.get("/api/voices", async () => listVoices());
 
@@ -99,36 +134,36 @@ export function registerApiRoutes(app: FastifyInstance) {
   });
 
   // ---------- businesses ----------
-  app.get("/api/businesses", async () =>
-    businesses.list().map((b) => businessSummary(b.id))
+  app.get("/api/businesses", async (req) =>
+    businesses.list(scopeOf(req)).map((b) => businessSummary(b.id))
   );
 
   app.post("/api/businesses", async (req, reply) => {
     const parsed = BusinessSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
     const input: BusinessInput = { ...parsed.data, hours: parsed.data.hours ?? defaultHours() } as BusinessInput;
-    const biz = businesses.create(input);
+    const biz = businesses.create(input, req.auth!.tenant.id);
     return businessSummary(biz.id);
   });
 
   app.get("/api/businesses/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const s = businessSummary(id);
-    if (!s) return reply.code(404).send({ error: "not found" });
-    return s;
+    if (!scopedBusiness(req, id)) return reply.code(404).send({ error: "not found" });
+    return businessSummary(id);
   });
 
   app.put("/api/businesses/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
+    if (!scopedBusiness(req, id)) return reply.code(404).send({ error: "not found" });
     const parsed = BusinessSchema.partial().safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
-    const updated = businesses.update(id, parsed.data as Partial<BusinessInput>);
-    if (!updated) return reply.code(404).send({ error: "not found" });
+    businesses.update(id, parsed.data as Partial<BusinessInput>);
     return businessSummary(id);
   });
 
-  app.delete("/api/businesses/:id", async (req) => {
+  app.delete("/api/businesses/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
+    if (!scopedBusiness(req, id)) return reply.code(404).send({ error: "not found" });
     businesses.delete(id);
     return { ok: true };
   });
@@ -136,7 +171,7 @@ export function registerApiRoutes(app: FastifyInstance) {
   // ---------- receptionist factory ----------
   app.post("/api/businesses/:id/receptionist/preview", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const biz = businesses.get(id);
+    const biz = scopedBusiness(req, id);
     if (!biz) return reply.code(404).send({ error: "business not found" });
     const parsed = ReceptionistSchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
@@ -164,7 +199,7 @@ export function registerApiRoutes(app: FastifyInstance) {
 
   app.post("/api/businesses/:id/receptionist", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const biz = businesses.get(id);
+    const biz = scopedBusiness(req, id);
     if (!biz) return reply.code(404).send({ error: "business not found" });
     const parsed = ReceptionistSchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
@@ -208,9 +243,18 @@ export function registerApiRoutes(app: FastifyInstance) {
     return rcp;
   });
 
-  app.get("/api/businesses/:id/receptionists", async (req) => {
+  app.get("/api/businesses/:id/receptionists", async (req, reply) => {
     const { id } = req.params as { id: string };
+    if (!scopedBusiness(req, id)) return reply.code(404).send({ error: "not found" });
     return receptionists.listForBusiness(id);
+  });
+
+  // ---------- web test-dialer stream token ----------
+  /** Single-use token authorizing one media-stream connection to this business. */
+  app.post("/api/businesses/:id/stream-token", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!scopedBusiness(req, id)) return reply.code(404).send({ error: "not found" });
+    return { token: mintStreamToken({ businessId: id, web: true }), expiresInSec: 300 };
   });
 
   // ---------- website extraction ----------
@@ -231,6 +275,8 @@ export function registerApiRoutes(app: FastifyInstance) {
 
   // ---------- numbers ----------
   app.get("/api/businesses/:id/number/search", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!scopedBusiness(req, id)) return reply.code(404).send({ error: "not found" });
     if (!twilio.twilioConfigured()) return reply.code(501).send({ error: "Twilio keys not configured" });
     const q = req.query as Record<string, string>;
     try {
@@ -242,7 +288,7 @@ export function registerApiRoutes(app: FastifyInstance) {
 
   app.post("/api/businesses/:id/number/provision", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const biz = businesses.get(id);
+    const biz = scopedBusiness(req, id);
     if (!biz) return reply.code(404).send({ error: "business not found" });
     if (!twilio.twilioConfigured()) return reply.code(501).send({ error: "Twilio keys not configured" });
     const body = (req.body ?? {}) as { e164?: string };
@@ -259,7 +305,7 @@ export function registerApiRoutes(app: FastifyInstance) {
   /** Attach a number you already own (optionally reconfiguring its webhook). */
   app.post("/api/businesses/:id/number/attach", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const biz = businesses.get(id);
+    const biz = scopedBusiness(req, id);
     if (!biz) return reply.code(404).send({ error: "business not found" });
     const body = (req.body ?? {}) as { e164?: string; twilioSid?: string };
     if (!body.e164) return reply.code(400).send({ error: "e164 required" });
@@ -281,7 +327,7 @@ export function registerApiRoutes(app: FastifyInstance) {
 
   app.delete("/api/businesses/:id/number", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const biz = businesses.get(id);
+    const biz = scopedBusiness(req, id);
     if (!biz) return reply.code(404).send({ error: "business not found" });
     phoneNumbers.delete(id);
     return { ok: true };
@@ -297,36 +343,41 @@ export function registerApiRoutes(app: FastifyInstance) {
   });
 
   // ---------- calls / transcripts ----------
-  app.get("/api/businesses/:id/calls", async (req) => {
+  app.get("/api/businesses/:id/calls", async (req, reply) => {
     const { id } = req.params as { id: string };
+    if (!scopedBusiness(req, id)) return reply.code(404).send({ error: "not found" });
     return calls.listForBusiness(id);
   });
 
   app.get("/api/calls/:callId", async (req, reply) => {
     const { callId } = req.params as { callId: string };
-    const call = calls.get(callId);
+    const call = calls.getScoped(callId, scopeOf(req));
     if (!call) return reply.code(404).send({ error: "not found" });
     return { call, turns: turns.forCall(callId) };
   });
 
   // ---------- messages / appointments ----------
-  app.get("/api/businesses/:id/messages", async (req) => {
+  app.get("/api/businesses/:id/messages", async (req, reply) => {
     const { id } = req.params as { id: string };
+    if (!scopedBusiness(req, id)) return reply.code(404).send({ error: "not found" });
     return messages.listForBusiness(id);
   });
-  app.patch("/api/messages/:msgId", async (req) => {
+  app.patch("/api/messages/:msgId", async (req, reply) => {
     const { msgId } = req.params as { msgId: string };
+    if (!messages.isScoped(msgId, scopeOf(req))) return reply.code(404).send({ error: "not found" });
     const body = (req.body ?? {}) as { status?: "new" | "handled" };
     if (body.status) messages.setStatus(msgId, body.status);
     return { ok: true };
   });
 
-  app.get("/api/businesses/:id/appointments", async (req) => {
+  app.get("/api/businesses/:id/appointments", async (req, reply) => {
     const { id } = req.params as { id: string };
+    if (!scopedBusiness(req, id)) return reply.code(404).send({ error: "not found" });
     return appointments.listForBusiness(id);
   });
-  app.patch("/api/appointments/:apptId", async (req) => {
+  app.patch("/api/appointments/:apptId", async (req, reply) => {
     const { apptId } = req.params as { apptId: string };
+    if (!appointments.isScoped(apptId, scopeOf(req))) return reply.code(404).send({ error: "not found" });
     const body = (req.body ?? {}) as { status?: "new" | "confirmed" | "declined" };
     if (body.status) appointments.setStatus(apptId, body.status);
     return { ok: true };
@@ -335,7 +386,7 @@ export function registerApiRoutes(app: FastifyInstance) {
   // ---------- text chat simulator (SSE) ----------
   app.post("/api/businesses/:id/chat", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const biz = businesses.get(id);
+    const biz = scopedBusiness(req, id);
     const rcp = biz ? receptionists.activeForBusiness(id) : undefined;
     if (!biz || !rcp) return reply.code(404).send({ error: "business or receptionist not found" });
 
@@ -384,8 +435,8 @@ export function registerApiRoutes(app: FastifyInstance) {
   });
 
   // ---------- demo seed ----------
-  app.post("/api/seed-demo", async () => {
-    const existing = businesses.list().find((b) => b.name === "Sunrise Dental Studio");
+  app.post("/api/seed-demo", async (req) => {
+    const existing = businesses.list(scopeOf(req)).find((b) => b.name === "Sunrise Dental Studio");
     if (existing) return businessSummary(existing.id);
     const biz = businesses.create({
       name: "Sunrise Dental Studio",
@@ -420,7 +471,7 @@ export function registerApiRoutes(app: FastifyInstance) {
       policies:
         "24-hour cancellation notice required or a $50 fee applies. New patients should arrive 15 minutes early. We accept cash, all major credit cards, and CareCredit.",
       notes: "Dr. Maya Chen and Dr. Robert Alvarez are the dentists. Emergencies are usually seen same-day.",
-    });
+    }, req.auth!.tenant.id);
     const defaults = defaultProviders();
     receptionists.create({
       businessId: biz.id,

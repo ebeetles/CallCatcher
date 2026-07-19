@@ -167,24 +167,40 @@ describe("media-stream gating", () => {
     expect(r.gotTranscript).toBe(false);
   });
 
-  it("rejects web streams with a wrong dashboard token", async () => {
+  it("rejects web streams with a bogus token", async () => {
     const r = await openStream({ businessId, web: "1", token: "wrong" });
     expect(r.closed).toBe(true);
     expect(r.gotTranscript).toBe(false);
   });
 
-  it("accepts web streams presenting the dashboard token", async () => {
+  it("rejects web streams presenting the raw dashboard token (must mint a stream token)", async () => {
     const r = await openStream({ businessId, web: "1", token: DASH_TOKEN, from: "+15550001234" });
+    expect(r.gotTranscript).toBe(false);
+  });
+
+  it("accepts web streams with a minted stream token, and binds them to the business", async () => {
+    const minted = (await fetch(`${baseUrl}/api/businesses/${businessId}/stream-token`, {
+      method: "POST",
+      headers: auth,
+    }).then((r) => r.json())) as { token: string };
+    expect(minted.token).toBeTruthy();
+    // Client-sent businessId is ignored in favor of the token's grant.
+    const r = await openStream({ businessId: "biz_spoofed", web: "1", token: minted.token, from: "+15550001234" });
     expect(r.gotTranscript).toBe(true); // greeting arrived — session actually started
   });
 
-  it("accepts phone streams with a minted token, once", async () => {
+  it("refuses to mint stream tokens without auth", async () => {
+    const res = await fetch(`${baseUrl}/api/businesses/${businessId}/stream-token`, { method: "POST" });
+    expect(res.status).toBe(401);
+  });
+
+  it("stream tokens are single-use and carry the business grant", async () => {
     const { mintStreamToken, consumeStreamToken } = await import("../src/security.ts");
-    const t = mintStreamToken();
-    expect(consumeStreamToken(t)).toBe(true);
-    expect(consumeStreamToken(t)).toBe(false); // single use
-    expect(consumeStreamToken("unknown")).toBe(false);
-    expect(consumeStreamToken(undefined)).toBe(false);
+    const t = mintStreamToken({ businessId: "biz_x", web: false });
+    expect(consumeStreamToken(t)).toEqual({ businessId: "biz_x", web: false });
+    expect(consumeStreamToken(t)).toBeUndefined(); // single use
+    expect(consumeStreamToken("unknown")).toBeUndefined();
+    expect(consumeStreamToken(undefined)).toBeUndefined();
   });
 });
 

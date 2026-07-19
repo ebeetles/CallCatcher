@@ -57,7 +57,7 @@ export function registerTwilioRoutes(app: FastifyInstance) {
     }
 
     // One-time token proving the media stream comes from this verified webhook.
-    const streamToken = mintStreamToken();
+    const streamToken = mintStreamToken({ businessId: business.id, web: false });
 
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>

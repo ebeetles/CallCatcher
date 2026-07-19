@@ -6,16 +6,21 @@ Plan: [SAAS_PLAN.md](SAAS_PLAN.md). Update this file as work lands; any session 
 
 - [x] Phase 0 — Plan written, decisions locked (managed keys + Twilio subaccounts, Stripe
       w/ default tiers, Supabase Auth, single server + SQLite). Branch `feature/saas-platform`.
-- [ ] **Phase 1 — Server tenancy + Supabase auth** ← current
-  - [ ] deps: `jose`
-  - [ ] config: SUPABASE_URL / SUPABASE_JWT_SECRET / ADMIN_EMAILS / SECRETS_KEY / auth mode
-  - [ ] schema: tenants, users, usage_monthly, businesses.tenant_id
-  - [ ] auth module (JWKS + HS256 verify, bootstrap user→tenant, admin adoption)
-  - [ ] onRequest auth hook (supabase / token / open modes) + /api/public/config + /api/health
-  - [ ] tenant scoping on every route (businesses + all sub-resources)
-  - [ ] stream tokens bound to businessId + POST /api/businesses/:id/stream-token
-  - [ ] web dialer / fake-call script updated to stream-token flow
-  - [ ] tests: tenancy.test.ts isolation matrix; security.test.ts adapted; all green
+- [x] **Phase 1 — Server tenancy + Supabase auth** (2026-07-19)
+  - [x] deps: `jose`
+  - [x] config: SUPABASE_URL / SUPABASE_ANON_KEY / SUPABASE_JWT_SECRET / ADMIN_EMAILS + authMode()
+  - [x] schema: tenants, users, usage_monthly, businesses.tenant_id (+ indexes)
+  - [x] auth.ts (JWKS + HS256 verify, ensureUser bootstrap, admin adoption, ops/dev contexts,
+        setTenantCreatedHook for Phase 3 subaccounts)
+  - [x] onRequest auth hook (supabase / token / open) + /api/public/config + /api/health
+  - [x] tenant scoping on every route (businesses, receptionists, numbers, calls, messages,
+        appointments, chat, seed-demo) — foreign ids → 404
+  - [x] stream tokens carry {businessId, web} grants; POST /api/businesses/:id/stream-token;
+        token's grant is authoritative over client-sent businessId
+  - [x] fake-call script mints a stream token first (tokenless fallback for open mode)
+  - [x] tests: tenancy.test.ts (auth gate, isolation matrix, per-tenant seed, stream tokens,
+        admin adoption) — 41 tests green; typecheck clean
+  - Deferred to P7 sweep: per-tenant rate-limit keying on chat/extract-website (IP-keyed today)
 - [ ] Phase 2 — Web auth + shell (supabase-js, login/signup/reset, AuthProvider, account menu)
 - [ ] Phase 3 — Twilio subaccounts (client refactor, bootstrap creation, per-tenant webhook
       signature validation, numbers/SMS via subaccount, suspend/reactivate)
