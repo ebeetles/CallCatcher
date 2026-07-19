@@ -6,6 +6,7 @@ import rateLimit from "@fastify/rate-limit";
 import path from "node:path";
 import fs from "node:fs";
 import { authMode, config, REPO_ROOT } from "./config.ts";
+import { registerAdminRoutes } from "./routes/admin.ts";
 import { registerApiRoutes } from "./routes/api.ts";
 import { registerBillingRoutes } from "./routes/billing.ts";
 import { registerTwilioRoutes } from "./routes/twilio.ts";
@@ -105,6 +106,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
 
   registerApiRoutes(app);
   registerBillingRoutes(app);
+  registerAdminRoutes(app);
   registerTwilioRoutes(app);
 
   /** Resolve session deps from the stream's start message (Twilio or web dialer). */

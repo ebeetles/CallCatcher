@@ -101,6 +101,24 @@ export const getUsage = () => api<UsageResponse>("/api/usage");
 // ---------- billing ----------
 export const startCheckout = (plan: string) => api<{ url: string }>("/api/billing/checkout", jsonBody({ plan }));
 export const openBillingPortal = () => api<{ url: string }>("/api/billing/portal", { method: "POST", body: "{}" });
+
+// ---------- platform admin ----------
+export interface AdminTenant {
+  id: string;
+  name: string;
+  plan: string;
+  planStatus: string;
+  createdAt: string;
+  trialEndsAt?: string;
+  currentPeriodEnd?: string;
+  twilioSubaccountSid?: string;
+  stripeCustomerId?: string;
+  businesses: number;
+  month: { calls: number; seconds: number; estCostUsd: number };
+}
+export const adminListTenants = () => api<AdminTenant[]>("/api/admin/tenants");
+export const adminSetTenantStatus = (id: string, action: "suspend" | "reactivate") =>
+  api<{ ok: true }>(`/api/admin/tenants/${id}/${action}`, { method: "POST", body: "{}" });
 export const getVoices = () => api<Record<string, Array<{ id: string; label: string }>>>("/api/voices");
 export const getEstimate = (q: { callsPerDay: number; avgCallMinutes: number; llmModel: string; ttsProvider: string }) =>
   api<MonthlyEstimate>(

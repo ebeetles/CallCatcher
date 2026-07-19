@@ -11,6 +11,8 @@ import BusinessDetail from "./pages/BusinessDetail";
 import RateCard from "./pages/RateCard";
 import UsagePage from "./pages/UsagePage";
 import BillingPage from "./pages/BillingPage";
+import AdminPage from "./pages/AdminPage";
+import Landing from "./pages/Landing";
 
 const StatusCtx = createContext<{ status?: StatusResponse; reload: () => void }>({ reload: () => {} });
 
@@ -200,6 +202,11 @@ function Console() {
             <NavLink to="/new" className={({ isActive }) => `navlink${isActive ? " active" : ""}`}>
               New business
             </NavLink>
+            {status?.auth.platformAdmin ? (
+              <NavLink to="/admin" className={({ isActive }) => `navlink${isActive ? " active" : ""}`}>
+                Tenants
+              </NavLink>
+            ) : null}
           </nav>
           <div className="rail-spacer" />
           <SystemRail status={status} />
@@ -223,6 +230,7 @@ function Console() {
               <Route path="/costs" element={<RateCard />} />
               <Route path="/usage" element={<UsagePage />} />
               <Route path="/billing" element={<BillingPage />} />
+              <Route path="/admin" element={<AdminPage />} />
               {/* Recovery links land here with a live session — show the set-password form. */}
               <Route path="/reset" element={<ResetPage />} />
               <Route path="/login" element={<Navigate to="/" replace />} />
@@ -258,10 +266,11 @@ function Gate() {
   if (config.authMode === "supabase" && !session) {
     return (
       <Routes>
+        <Route path="/" element={<Landing />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignupPage />} />
         <Route path="/reset" element={<ResetPage />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     );
   }

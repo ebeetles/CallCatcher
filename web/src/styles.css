@@ -1085,3 +1085,314 @@ textarea.prompt-view {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- landing (public marketing page) ---------- */
+
+.landing {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.landing .mono {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--faint);
+}
+.btn-lg {
+  padding: 10px 22px;
+  font-size: 15px;
+}
+
+.landing-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px clamp(20px, 5vw, 56px);
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+}
+.landing-top nav {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.landing-top nav a {
+  color: var(--ink);
+}
+
+.landing-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: clamp(24px, 5vw, 64px);
+  align-items: center;
+  padding: clamp(40px, 8vh, 96px) clamp(20px, 5vw, 56px);
+  max-width: 1180px;
+  margin: 0 auto;
+  width: 100%;
+}
+.landing h1 {
+  font-size: clamp(34px, 5.2vw, 58px);
+  line-height: 1.04;
+  letter-spacing: -0.015em;
+  margin: 10px 0 18px;
+  font-weight: 760;
+  font-variation-settings: "wdth" 122;
+  text-wrap: balance;
+}
+.lh-sub {
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--muted);
+  max-width: 52ch;
+  margin: 0 0 22px;
+}
+.lh-cta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 26px;
+}
+.lh-cta-note {
+  color: var(--faint);
+  font-size: 13px;
+}
+.lh-specs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 0;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.lh-specs span {
+  padding-right: 14px;
+  margin-right: 14px;
+  border-right: 1px solid var(--line);
+}
+.lh-specs span:last-child {
+  border-right: 0;
+}
+
+/* the signature: a switchboard line card answering a call */
+.callticket {
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 28px rgba(27, 33, 29, 0.09), var(--shadow);
+  overflow: hidden;
+}
+.callticket-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-dim);
+}
+.callticket-status {
+  margin-left: auto;
+}
+.callticket-body {
+  padding: 16px 16px 18px;
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ct-turn {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  max-width: 44ch;
+}
+.ct-who {
+  display: block;
+  margin-bottom: 2px;
+}
+.ct-turn.ai .ct-who {
+  color: var(--bell-deep);
+}
+.ct-turn.caller {
+  align-self: flex-end;
+  text-align: right;
+}
+.ct-turn.caller .ct-who {
+  color: var(--ring);
+}
+.ct-ticket {
+  margin-top: 8px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--ok-wash);
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.ct-ticket .mono {
+  display: block;
+  color: var(--ok);
+  margin-bottom: 4px;
+}
+
+.landing-sec {
+  padding: clamp(36px, 7vh, 72px) clamp(20px, 5vw, 56px);
+  max-width: 1180px;
+  margin: 0 auto;
+  width: 100%;
+}
+.landing-sec-dim {
+  background: var(--panel-dim);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  max-width: none;
+}
+.landing-sec-dim > * {
+  max-width: 1180px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.lh-h2,
+.landing-final h2 {
+  font-size: clamp(24px, 3.4vw, 36px);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  font-weight: 720;
+  font-variation-settings: "wdth" 118;
+  margin: 8px 0 10px;
+  text-wrap: balance;
+}
+
+.lh-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(18px, 3vw, 36px);
+  margin-top: 18px;
+}
+.lh-step-n {
+  font-size: 26px;
+  color: var(--bell);
+  letter-spacing: 0;
+}
+.lh-step h3 {
+  margin: 8px 0 6px;
+  font-size: 17px;
+}
+.lh-step p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.lh-equip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 40px;
+  margin-top: 16px;
+}
+.lh-equip-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.lh-equip-row .lamp {
+  flex: none;
+  transform: translateY(-1px);
+}
+.lh-equip-row span {
+  color: var(--muted);
+}
+
+.lh-pricing {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 24px;
+}
+.lh-plan {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+}
+.lh-plan.featured {
+  border-color: var(--bell);
+  box-shadow: 0 0 0 1px var(--bell), 0 10px 24px rgba(11, 123, 192, 0.12);
+}
+.lh-plan-flag {
+  position: absolute;
+  top: -9px;
+  left: 16px;
+  background: var(--bell);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+.lh-plan h3 {
+  margin: 0 0 2px;
+}
+.lh-price {
+  font-size: 15px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.lh-price .mono {
+  font-size: 30px;
+  color: var(--ink);
+  letter-spacing: 0;
+}
+.lh-plan ul {
+  margin: 0 0 16px;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.7;
+  flex: 1;
+}
+.lh-plan .btn {
+  align-self: flex-start;
+}
+.lh-fineprint {
+  margin-top: 18px;
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.landing-final {
+  text-align: center;
+  padding: clamp(48px, 9vh, 96px) 20px;
+  border-top: 1px solid var(--line);
+}
+.landing-final h2 {
+  max-width: 22ch;
+  margin: 0 auto 20px;
+}
+.landing-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px clamp(20px, 5vw, 56px);
+  border-top: 1px solid var(--line);
+  margin-top: auto;
+}
+
+@media (max-width: 880px) {
+  .landing-hero {
+    grid-template-columns: 1fr;
+    padding-top: 36px;
+  }
+  .lh-steps,
+  .lh-pricing {
+    grid-template-columns: 1fr;
+  }
+  .lh-equip {
+    grid-template-columns: 1fr;
+  }
+  .landing-top nav {
+    gap: 12px;
+  }
+}
