@@ -2,7 +2,18 @@
 
 Plan: [SAAS_PLAN.md](SAAS_PLAN.md). Update this file as work lands; any session resumes from here.
 
-## Status: Phase 1 in progress
+## Status: ALL 7 PHASES COMPLETE (2026-07-19) — awaiting Elwin's external setup
+
+The codebase is a working multi-tenant SaaS. What's left needs Elwin's accounts (steps in
+[SAAS_SETUP.md](SAAS_SETUP.md)):
+
+1. Create the Supabase project → `SUPABASE_URL`/`SUPABASE_ANON_KEY` + `ADMIN_EMAILS` + `SECRETS_KEY` in `.env`
+2. Create Stripe products/prices + webhook → `STRIPE_*` + `APP_URL`
+3. Deploy branch `feature/saas-platform` (merge to main when happy), run go-live checklist in SAAS_SETUP.md §5
+4. First real-Supabase e2e signup happens then (API-level JWT flow already fully tested)
+
+62 tests green · typecheck clean · production build passes · browser-verified (landing,
+auth gates, console, usage, admin, fake call, SSE chat).
 
 - [x] Phase 0 — Plan written, decisions locked (managed keys + Twilio subaccounts, Stripe
       w/ default tiers, Supabase Auth, single server + SQLite). Branch `feature/saas-platform`.
@@ -100,3 +111,18 @@ Plan: [SAAS_PLAN.md](SAAS_PLAN.md). Update this file as work lands; any session 
 - 2026-07-19: Kicked off. Baseline: `npm test` green before changes (verify at branch point).
 - DASHBOARD_TOKEN is kept as a platform-admin bearer (ops/back-compat with current deploy).
 - Legacy businesses (tenant_id NULL) adopted by first ADMIN_EMAILS user's tenant.
+- 2026-07-20 (follow-up session):
+  - Google OAuth sign-in added to login/signup (supabase.auth.signInWithOAuth; no server
+    change — JWT verify already provider-agnostic). SAAS_SETUP.md §1 gained a Google setup
+    subsection + go-live item; user configured & verified the provider live.
+  - Brand refresh: voice-waveform BrandMark component replaces the dot-lamp CSS mark across
+    landing/auth/console; favicon updated to match.
+  - Dedicated admin.test.ts (6 tests: 404 gate, roster, suspend→inactive, reactivate, unknown
+    id) — the P6 admin coverage previously lived only as one case in tenancy.test.ts.
+  - Test hygiene: config.ts loads repo-root .env for any unset var, so tests that don't pin
+    SUPABASE_URL="" inherited the developer's real .env once Supabase was configured —
+    integration.test.ts broke (open-mode seed-demo). Pinned auth env in integration + security
+    tests to make the suite hermetic.
+  - DEPLOY.md corrected: env table + Part 2 login step + checklist rewritten for supabase auth
+    (were still describing the legacy DASHBOARD_TOKEN gate).
+  - Verify: 68 tests green, typecheck both workspaces, production build clean.

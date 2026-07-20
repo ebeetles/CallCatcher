@@ -125,6 +125,18 @@ describe("tenant isolation", () => {
     expect((await api(tokenA, `/api/businesses/${bizA}`)).status).toBe(200);
   });
 
+  it("blocks attaching a number that belongs to another tenant's business", async () => {
+    const { phoneNumbers } = await import("../src/db.ts");
+    phoneNumbers.upsert({ businessId: bizA, e164: "+15550004444", status: "manual" });
+    const seededB = await api(tokenB, "/api/seed-demo", { method: "POST" });
+    const res = await api(tokenB, `/api/businesses/${seededB.body.id}/number/attach`, {
+      method: "POST",
+      body: JSON.stringify({ e164: "+15550004444" }),
+    });
+    expect(res.status).toBe(409);
+    expect(phoneNumbers.byE164("+15550004444")!.businessId).toBe(bizA); // mapping unchanged
+  });
+
   it("isolates calls, messages, and appointments by owning business", async () => {
     const { calls, messages, appointments } = await import("../src/db.ts");
     const call = calls.create(bizA, "chat");
@@ -181,6 +193,34 @@ describe("stream tokens (supabase mode)", () => {
     const minted = await api(tokenA, `/api/businesses/${bizA}/stream-token`, { method: "POST" });
     expect(minted.status).toBe(200);
     expect(await openStream({ businessId: bizA, web: "1", token: minted.body.token, from: "+15550001234" })).toBe(true);
+  });
+});
+
+describe("platform admin APIs", () => {
+  it("hides /api/admin from regular tenants (404) and serves platform admins", async () => {
+    expect((await api(tokenA, "/api/admin/tenants")).status).toBe(404);
+
+    const bossToken = await mintJwt({ sub: "user-admin2", email: "boss@platform.test", agencyName: "HQ2" });
+    await api(bossToken, "/api/status"); // bootstrap
+    const list = await api(bossToken, "/api/admin/tenants");
+    expect(list.status).toBe(200);
+    expect(list.body.length).toBeGreaterThanOrEqual(2);
+    const row = list.body.find((t: any) => t.name === "Agency A");
+    expect(row).toBeTruthy();
+    expect(row.businesses).toBeGreaterThanOrEqual(1);
+
+    // Suspend flips enforcement immediately; reactivate lifts it.
+    expect((await api(bossToken, `/api/admin/tenants/${row.id}/suspend`, { method: "POST", body: "{}" })).status).toBe(200);
+    const blocked = await api(tokenA, "/api/status");
+    expect(blocked.body.auth.usage.active).toBe(false);
+    expect(blocked.body.auth.usage.blockedReason).toBe("suspended");
+    expect((await api(tokenA, `/api/businesses/${bizA}/chat`, { method: "POST", body: JSON.stringify({ history: [{ role: "user", text: "hi" }] }) })).status).toBe(402);
+
+    expect((await api(bossToken, `/api/admin/tenants/${row.id}/reactivate`, { method: "POST", body: "{}" })).status).toBe(200);
+    expect((await api(tokenA, "/api/status")).body.auth.usage.active).toBe(true);
+
+    // Regular tenants can't hit the mutation endpoints either.
+    expect((await api(tokenA, `/api/admin/tenants/${row.id}/suspend`, { method: "POST", body: "{}" })).status).toBe(404);
   });
 });
 

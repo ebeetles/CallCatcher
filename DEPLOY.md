@@ -3,6 +3,18 @@
 Split deployment: the **API server** runs on your Beelink (behind a Cloudflare Tunnel), and the
 **dashboard** deploys to Vercel as a static site pointed at the tunnel's URL.
 
+> **SaaS mode (the multi-tenant product).** The deployment mechanics below are unchanged, but
+> before you start do the one-time account setup in **[SAAS_SETUP.md](SAAS_SETUP.md)** — Supabase
+> project + Google OAuth, Stripe products + webhook — and have those values ready for the
+> Beelink's `.env`. Two notes specific to SaaS mode:
+>
+> - Setting `SUPABASE_URL` switches auth from the legacy `DASHBOARD_TOKEN` gate to Supabase
+>   login (email + Google). Agencies sign up and log in; `DASHBOARD_TOKEN` becomes an
+>   ops/break-glass bearer you keep for yourself.
+> - The **only** Vercel env the dashboard needs is `VITE_API_BASE_URL` (Part 2 §3). Supabase
+>   keys are *not* set on Vercel — the dashboard fetches them from `/api/public/config` at
+>   runtime. Point a Stripe webhook at `https://catcher.yourdomain.com/stripe/webhook`.
+
 ```
 Browser ⇄ Vercel (dashboard, static)
              │  every /api call goes here ⬇
@@ -52,14 +64,25 @@ Edit `server`'s `.env` (repo root) and fill in:
 | `DEEPGRAM_API_KEY` | your key — STT + default TTS |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | from the Twilio console |
 | `PUBLIC_URL` | the Cloudflare Tunnel URL, e.g. `https://catcher.yourdomain.com` (set this **after** step 5, then restart) |
-| `DASHBOARD_TOKEN` | **required** — generate with `openssl rand -hex 24`. Without this the API is open to the internet. |
+| `DASHBOARD_TOKEN` | **required** — generate with `openssl rand -hex 24`. In SaaS mode this is your ops/break-glass bearer; setting it also silences the startup warning. |
 | `ALLOWED_ORIGINS` | your Vercel dashboard URL, e.g. `https://callcatcher.vercel.app` (comma-separate if you add a custom domain later) |
+
+**SaaS mode also needs** (full details + how to obtain each in [SAAS_SETUP.md](SAAS_SETUP.md)):
+
+| Key | Value |
+|---|---|
+| `SUPABASE_URL` / `SUPABASE_ANON_KEY` | your Supabase project — turns on multi-tenant login |
+| `ADMIN_EMAILS` | your email(s), comma-separated — become platform admins on signup |
+| `SECRETS_KEY` | `openssl rand -hex 32` — **required**; encrypts tenant Twilio subaccount tokens at rest |
+| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / `STRIPE_PRICE_*` | billing (leave empty to run without billing; plans still enforced, checkout disabled) |
+| `APP_URL` | dashboard origin for Stripe redirects, e.g. `https://callcatcher.vercel.app` |
 
 Leave `PORT` at the default (`8787`) unless something else on the Beelink uses it.
 
-> ⚠️ `DASHBOARD_TOKEN` and `ALLOWED_ORIGINS` are the two settings that make this safe to expose
-> publicly. The server prints a warning at startup if `PUBLIC_URL` is set without
-> `DASHBOARD_TOKEN` — don't ignore it.
+> ⚠️ The server prints a warning at startup if `PUBLIC_URL` is set without `DASHBOARD_TOKEN`.
+> In legacy token mode `DASHBOARD_TOKEN` is the *only* thing protecting the API — never skip it.
+> In SaaS mode the Supabase JWT protects every `/api` route, but you should still set
+> `DASHBOARD_TOKEN` (ops access) and `ALLOWED_ORIGINS` (browser origin allowlist).
 
 ### 4. Run it under pm2
 
@@ -149,9 +172,14 @@ not read at runtime. If you change the Beelink's tunnel URL later, update this a
 
 ### 4. Deploy
 
-Push to `main` (or click Deploy). Once live, open the Vercel URL — you should see the same
-"Access token required" gate you tested locally. Paste the `DASHBOARD_TOKEN` from the Beelink's
-`.env` and the dashboard unlocks.
+Push to `main` (or click Deploy). Once live, open the Vercel URL:
+
+- **SaaS mode** (`SUPABASE_URL` set): you land on the marketing landing page with sign-in /
+  sign-up. Create your account with an email listed in `ADMIN_EMAILS` to get platform-admin
+  rights (the **Tenants** admin view). Google sign-in also needs its production redirect URL
+  added in Supabase + Google — see [SAAS_SETUP.md](SAAS_SETUP.md).
+- **Legacy token mode** (no `SUPABASE_URL`): you get the "Access token required" gate — paste
+  the Beelink's `DASHBOARD_TOKEN` to unlock.
 
 ---
 
@@ -166,9 +194,11 @@ needed.
 
 ## After deploy: sanity checklist
 
-- [ ] `curl https://catcher.yourdomain.com/api/status` without a token → `401`
-- [ ] Same call with `-H "authorization: Bearer $DASHBOARD_TOKEN"` → `200`
-- [ ] Vercel dashboard loads, token gate appears, unlocking works
+- [ ] `curl https://catcher.yourdomain.com/api/status` without auth → `401`
+- [ ] `curl https://catcher.yourdomain.com/api/public/config` → `200` with `"authMode":"supabase"`
+- [ ] Vercel dashboard loads the landing page; sign-up / login (email + Google) works
+- [ ] Your `ADMIN_EMAILS` account sees the **Tenants** admin view
+- [ ] Stripe test checkout completes and the tenant's plan flips (webhook reached the Beelink)
 - [ ] A business's phone line shows "Webhook configured" pointing at your tunnel URL
 - [ ] `npm run fake-call -w server` from the Beelink still works locally (sanity check the
       server itself, independent of the tunnel/Vercel)

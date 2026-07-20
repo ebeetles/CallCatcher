@@ -108,14 +108,6 @@ a:hover {
   justify-content: center;
   flex: none;
 }
-.brand-mark::after {
-  content: "";
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: #f5fa90;
-  box-shadow: inset 0 0 0 2.5px rgba(8, 95, 149, 0.35);
-}
 .brand-sub {
   font-family: var(--mono);
   font-size: 10px;
@@ -447,6 +439,23 @@ a:hover {
 .btn-danger:hover:not(:disabled) {
   border-color: var(--ring);
   background: var(--ring-wash);
+}
+.auth-or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0;
+  color: var(--faint);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.auth-or::before,
+.auth-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
 }
 .btn.sm {
   font-size: 12.5px;
