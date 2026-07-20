@@ -448,6 +448,23 @@ a:hover {
   border-color: var(--ring);
   background: var(--ring-wash);
 }
+.auth-or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0;
+  color: var(--faint);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.auth-or::before,
+.auth-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
 .btn.sm {
   font-size: 12.5px;
   padding: 4px 10px;
