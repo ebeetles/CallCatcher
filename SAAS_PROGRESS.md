@@ -90,25 +90,21 @@ auth gates, console, usage, admin, fake call, SSE chat).
         paywall integration — 60 tests green
   - Elwin setup needed later (SAAS_SETUP.md in P7): Stripe products/prices, webhook endpoint,
     STRIPE_* + APP_URL envs
-- [x] **Phase 6 — Landing, admin** (2026-07-19)
-  - [x] Public landing at "/" (supabase mode, signed out): telecom-manual marketing page —
-        hero with a self-typing call-ticket demo (deterministic elapsed-time animation,
-        reduced-motion static), numbered go-live steps, equipment board, pricing grid from
-        /api/public/config, CTAs → /signup. Verified full-page in browser.
-  - [x] /api/admin/tenants (+ /suspend /reactivate w/ subaccount status change), 404-hidden
-        from non-admins; AdminPage table + Tenants nav for platform admins; admin test in
-        tenancy.test.ts — 61 tests green
-  - [x] onboarding: existing empty-state + per-tenant seed demo covers first-run
-  - Note: browser-pane scroll+screenshot wedges on long pages (tool quirk, not app) —
-    verify tall pages via viewport resize instead
-- [x] **Phase 7 — Docs, security sweep, verify** (2026-07-19)
-  - [x] SAAS_SETUP.md (Supabase + Stripe setup, env reference, migration path for the current
-        Beelink deploy, go-live checklist, security model, scaling path)
-  - [x] README two-shapes rewrite + SaaS section; DEPLOY.md SaaS note; .env.example complete
-  - [x] security sweep fix: number/attach now 409s on numbers mapped to another tenant
-        (was an unhandled UNIQUE violation; same-tenant moves allowed) + isolation test
-  - [x] final verify: 62 tests, typecheck both workspaces, production build, browser e2e
-        (landing, auth gates, console, usage, admin, fake call, SSE chat)
+- [x] **Phase 6 — Landing, onboarding, admin** (2026-07-19)
+  - [x] Landing page (web/src/pages/Landing.tsx): hero call-ticket, how-it-works, live
+        pricing from /api/public/config, CTA → signup
+  - [x] /admin tenants view (AdminPage.tsx + routes/admin.ts): roster w/ plan, usage,
+        suspend/reactivate (platform_admin only)
+  - [x] Onboarding empty-state (BusinessList.tsx): first-time setup panel — 3 lamp-tracked
+        steps (create business → configure receptionist → put on a number) w/ progress
+        indicator, links, Learn-more row; keeps Create/Seed-demo actions
+- [ ] **Phase 7 — Docs, security sweep, e2e verify** (docs landed 2026-07-19)
+  - [x] SAAS_SETUP.md: Supabase/Stripe/Twilio setup, dev-vs-prod, go-live checklist,
+        architecture diagram, env reference table, troubleshooting
+  - [x] README: SaaS setup section (multi-tenant overview → SAAS_SETUP.md / SAAS_PLAN.md)
+  - [x] .env.example audited — already covers every config.ts var; no Phase 6/7 additions
+  - [ ] Security sweep + full e2e browser verify (signup → business → call → usage → billing)
+  - [ ] Deferred from P1: per-tenant rate-limit keying on chat/extract-website
 
 ## Notes / decisions log
 
