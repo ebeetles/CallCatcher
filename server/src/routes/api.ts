@@ -398,6 +398,15 @@ export function registerApiRoutes(app: FastifyInstance) {
     if (!biz) return reply.code(404).send({ error: "business not found" });
     const body = (req.body ?? {}) as { e164?: string; twilioSid?: string };
     if (!body.e164) return reply.code(400).send({ error: "e164 required" });
+    // A number maps to exactly one business. Moving it between your own
+    // businesses is fine; claiming another tenant's number is not.
+    const existing = phoneNumbers.byE164(body.e164);
+    if (existing && existing.businessId !== id) {
+      if (!businesses.getScoped(existing.businessId, scopeOf(req))) {
+        return reply.code(409).send({ error: "That number is already attached to another business." });
+      }
+      phoneNumbers.delete(existing.businessId);
+    }
     const client = twilio.tenantTwilio(req.auth!.tenant);
     if (body.twilioSid && client) {
       try {

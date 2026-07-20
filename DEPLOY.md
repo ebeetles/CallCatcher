@@ -3,6 +3,12 @@
 Split deployment: the **API server** runs on your Beelink (behind a Cloudflare Tunnel), and the
 **dashboard** deploys to Vercel as a static site pointed at the tunnel's URL.
 
+> **SaaS mode:** the steps below are unchanged for the multi-tenant product. Additionally set
+> the Supabase/Stripe/`SECRETS_KEY`/`ADMIN_EMAILS` vars from [SAAS_SETUP.md](SAAS_SETUP.md) in
+> the Beelink's `.env` (the dashboard needs no new Vercel env — it reads
+> `/api/public/config` at runtime), and point a Stripe webhook at
+> `https://catcher.yourdomain.com/stripe/webhook`.
+
 ```
 Browser ⇄ Vercel (dashboard, static)
              │  every /api call goes here ⬇

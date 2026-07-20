@@ -125,6 +125,18 @@ describe("tenant isolation", () => {
     expect((await api(tokenA, `/api/businesses/${bizA}`)).status).toBe(200);
   });
 
+  it("blocks attaching a number that belongs to another tenant's business", async () => {
+    const { phoneNumbers } = await import("../src/db.ts");
+    phoneNumbers.upsert({ businessId: bizA, e164: "+15550004444", status: "manual" });
+    const seededB = await api(tokenB, "/api/seed-demo", { method: "POST" });
+    const res = await api(tokenB, `/api/businesses/${seededB.body.id}/number/attach`, {
+      method: "POST",
+      body: JSON.stringify({ e164: "+15550004444" }),
+    });
+    expect(res.status).toBe(409);
+    expect(phoneNumbers.byE164("+15550004444")!.businessId).toBe(bizA); // mapping unchanged
+  });
+
   it("isolates calls, messages, and appointments by owning business", async () => {
     const { calls, messages, appointments } = await import("../src/db.ts");
     const call = calls.create(bizA, "chat");

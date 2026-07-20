@@ -2,7 +2,18 @@
 
 Plan: [SAAS_PLAN.md](SAAS_PLAN.md). Update this file as work lands; any session resumes from here.
 
-## Status: Phase 1 in progress
+## Status: ALL 7 PHASES COMPLETE (2026-07-19) — awaiting Elwin's external setup
+
+The codebase is a working multi-tenant SaaS. What's left needs Elwin's accounts (steps in
+[SAAS_SETUP.md](SAAS_SETUP.md)):
+
+1. Create the Supabase project → `SUPABASE_URL`/`SUPABASE_ANON_KEY` + `ADMIN_EMAILS` + `SECRETS_KEY` in `.env`
+2. Create Stripe products/prices + webhook → `STRIPE_*` + `APP_URL`
+3. Deploy branch `feature/saas-platform` (merge to main when happy), run go-live checklist in SAAS_SETUP.md §5
+4. First real-Supabase e2e signup happens then (API-level JWT flow already fully tested)
+
+62 tests green · typecheck clean · production build passes · browser-verified (landing,
+auth gates, console, usage, admin, fake call, SSE chat).
 
 - [x] Phase 0 — Plan written, decisions locked (managed keys + Twilio subaccounts, Stripe
       w/ default tiers, Supabase Auth, single server + SQLite). Branch `feature/saas-platform`.
@@ -90,7 +101,14 @@ Plan: [SAAS_PLAN.md](SAAS_PLAN.md). Update this file as work lands; any session 
   - [x] onboarding: existing empty-state + per-tenant seed demo covers first-run
   - Note: browser-pane scroll+screenshot wedges on long pages (tool quirk, not app) —
     verify tall pages via viewport resize instead
-- [ ] Phase 7 — Docs (README, SAAS_SETUP.md, .env.example), security sweep, e2e verify
+- [x] **Phase 7 — Docs, security sweep, verify** (2026-07-19)
+  - [x] SAAS_SETUP.md (Supabase + Stripe setup, env reference, migration path for the current
+        Beelink deploy, go-live checklist, security model, scaling path)
+  - [x] README two-shapes rewrite + SaaS section; DEPLOY.md SaaS note; .env.example complete
+  - [x] security sweep fix: number/attach now 409s on numbers mapped to another tenant
+        (was an unhandled UNIQUE violation; same-tenant moves allowed) + isolation test
+  - [x] final verify: 62 tests, typecheck both workspaces, production build, browser e2e
+        (landing, auth gates, console, usage, admin, fake call, SSE chat)
 
 ## Notes / decisions log
 

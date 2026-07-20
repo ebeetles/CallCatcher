@@ -1,13 +1,19 @@
 # ☎️ CallCatcher
 
-**A factory for AI phone receptionists.** Type in a small business's details — hours, services,
-FAQs, policies — and CallCatcher compiles them into a fully working AI receptionist on a real
-phone number: it answers calls, speaks naturally, quotes prices, takes messages, books
-appointment requests, transfers to a human, and logs every call with a transcript and cost.
+**A factory for AI phone receptionists — packaged as a B2B SaaS.** Type in a small business's
+details — hours, services, FAQs, policies — and CallCatcher compiles them into a fully working
+AI receptionist on a real phone number: it answers calls, speaks naturally, quotes prices,
+takes messages, books appointment requests, transfers to a human, and logs every call with a
+transcript and cost.
 
-Built as an agency tool: one operator can run receptionists for many businesses from a single
-dashboard, at provider costs of roughly **$25–35/month per business** (12 calls/day) — whatever
-you charge on top is margin.
+It runs in two shapes from the same codebase:
+
+- **Solo agency tool** (zero config): one operator, one dashboard, your keys — provider costs
+  of roughly **$25–35/month per business** (12 calls/day); whatever you charge on top is margin.
+- **Multi-tenant SaaS**: agencies sign up on your landing page (Supabase Auth), each gets an
+  isolated dashboard and its own Twilio subaccount under your master account, metered usage,
+  tiered plans (trial/$49/$149/$399), and Stripe billing — setup in
+  **[SAAS_SETUP.md](SAAS_SETUP.md)**.
 
 ## How it works
 
@@ -99,6 +105,23 @@ server/
 web/
   src/                   # operator dashboard (React + Vite)
 ```
+
+## SaaS mode
+
+Everything above works with zero config ("open mode" — you are the sole dev tenant). To sell
+this to other agencies, follow [SAAS_SETUP.md](SAAS_SETUP.md):
+
+1. **Supabase Auth** — signup/login/verify/reset; server verifies JWTs, data stays in SQLite.
+2. **Twilio subaccounts** — each agency's numbers/calls/SMS isolated under your master account
+   (tokens encrypted at rest with `SECRETS_KEY`).
+3. **Plans + metering** — per-tenant monthly minutes/business caps (`server/src/plans.ts`),
+   enforced at creation time and at the voice webhook.
+4. **Stripe** — checkout, customer portal, webhook-synced plan state.
+5. **Landing page + admin** — public marketing/pricing page when signed out; `ADMIN_EMAILS`
+   accounts get the Tenants roster with suspend/reactivate.
+
+`npm test` covers the tenant-isolation matrix, webhook signatures (Twilio per-tenant +
+Stripe), plan enforcement, and the full voice pipeline.
 
 ## Notes
 
