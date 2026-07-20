@@ -44,6 +44,29 @@ history live in [SAAS_PLAN.md](SAAS_PLAN.md) / [SAAS_PROGRESS.md](SAAS_PROGRESS.
 The dashboard needs **no** Supabase env of its own — it fetches `GET /api/public/config` at
 runtime. No Vercel changes are required beyond what DEPLOY.md already set up.
 
+### Google sign-in (optional, recommended)
+
+The login/signup pages show a "Continue with Google" button; it's inert until you wire up the
+Google provider. No code or env changes — it's all Supabase + Google config:
+
+1. **Google Cloud Console** ([console.cloud.google.com](https://console.cloud.google.com)) →
+   create/select a project → **APIs & Services → OAuth consent screen**: configure it
+   (External; app name + support email). While it's in **Testing** only whitelisted users can
+   log in — **Publish** it before real agencies sign up.
+2. **APIs & Services → Credentials → Create Credentials → OAuth client ID → Web application.**
+   Under **Authorized redirect URIs** add the callback Supabase shows on its Google provider
+   page: `https://<ref>.supabase.co/auth/v1/callback`. Copy the **Client ID** + **Client
+   Secret**.
+3. **Supabase → Authentication → Providers → Google**: flip **Enable** on, paste the Client ID
+   (the "Client ID (for OAuth)" field — *not* the "Client IDs" One Tap box below it) and Client
+   Secret, Save.
+4. **Supabase → Authentication → URL Configuration**: make sure every origin the app runs on is
+   in **Redirect URLs** (`http://localhost:5173` for dev, your production URL for prod) — the
+   OAuth round-trip returns there.
+
+Gotchas: `provider is not enabled` means the Enable toggle didn't save; a redirect error means
+the origin is missing from step 4's allowlist.
+
 ## 2. Stripe (billing)
 
 1. Create three recurring monthly **Products/Prices** matching `plans.ts`:
@@ -100,6 +123,8 @@ Your existing single-tenant data keeps working through every step:
 - [ ] `curl https://<api>/api/health` → `{"ok":true}`; `/api/public/config` shows
       `authMode: "supabase"`, `billingEnabled: true`, and your plan catalog
 - [ ] Sign up with `ADMIN_EMAILS` address → Tenants nav visible, legacy businesses present
+- [ ] Google sign-in works **and** the OAuth consent screen is **Published** (not Testing);
+      production origin is in Supabase's Redirect URLs
 - [ ] Fresh signup with a throwaway email → verify email → lands on empty console, trial
       banner, seed demo works, second business blocked with upgrade prompt
 - [ ] Test checkout with Stripe test card `4242 4242 4242 4242` → plan flips to paid,

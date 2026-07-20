@@ -115,3 +115,18 @@ auth gates, console, usage, admin, fake call, SSE chat).
 - 2026-07-19: Kicked off. Baseline: `npm test` green before changes (verify at branch point).
 - DASHBOARD_TOKEN is kept as a platform-admin bearer (ops/back-compat with current deploy).
 - Legacy businesses (tenant_id NULL) adopted by first ADMIN_EMAILS user's tenant.
+- 2026-07-20 (follow-up session):
+  - Google OAuth sign-in added to login/signup (supabase.auth.signInWithOAuth; no server
+    change — JWT verify already provider-agnostic). SAAS_SETUP.md §1 gained a Google setup
+    subsection + go-live item; user configured & verified the provider live.
+  - Brand refresh: voice-waveform BrandMark component replaces the dot-lamp CSS mark across
+    landing/auth/console; favicon updated to match.
+  - Dedicated admin.test.ts (6 tests: 404 gate, roster, suspend→inactive, reactivate, unknown
+    id) — the P6 admin coverage previously lived only as one case in tenancy.test.ts.
+  - Test hygiene: config.ts loads repo-root .env for any unset var, so tests that don't pin
+    SUPABASE_URL="" inherited the developer's real .env once Supabase was configured —
+    integration.test.ts broke (open-mode seed-demo). Pinned auth env in integration + security
+    tests to make the suite hermetic.
+  - DEPLOY.md corrected: env table + Part 2 login step + checklist rewritten for supabase auth
+    (were still describing the legacy DASHBOARD_TOKEN gate).
+  - Verify: 68 tests green, typecheck both workspaces, production build clean.

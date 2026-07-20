@@ -21,6 +21,11 @@ process.env.PUBLIC_URL = PUBLIC_URL;
 process.env.DASHBOARD_TOKEN = DASH_TOKEN;
 process.env.TWILIO_ACCOUNT_SID = "ACtest";
 process.env.TWILIO_AUTH_TOKEN = TW_TOKEN;
+// Pin to legacy token mode regardless of the developer's .env (Supabase vars
+// would otherwise flip authMode to "supabase" and change the gating tested here).
+process.env.SUPABASE_URL = "";
+process.env.SUPABASE_ANON_KEY = "";
+process.env.SUPABASE_JWT_SECRET = "";
 
 let app: any;
 let baseUrl = "";
