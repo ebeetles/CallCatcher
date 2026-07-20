@@ -2,6 +2,21 @@ import type { ReactNode } from "react";
 
 export type LampState = "ok" | "amber" | "live" | "bell" | "off";
 
+/** Brand badge: a voice-waveform mark on the bell-blue chip. Scales with the
+ *  `.brand-mark` box (default 22px); `size` overrides for larger contexts. */
+export function BrandMark({ size }: { size?: number }) {
+  return (
+    <span className="brand-mark" style={size ? { width: size, height: size } : undefined} aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="72%" height="72%">
+        <rect x="5" y="9" width="2.6" height="6" rx="1.3" fill="#fff" />
+        <rect x="9.2" y="5.5" width="2.6" height="13" rx="1.3" fill="#fff" />
+        <rect x="13.4" y="7.5" width="2.6" height="9" rx="1.3" fill="#f5fa90" />
+        <rect x="17.6" y="10.5" width="2.6" height="3" rx="1.3" fill="#fff" />
+      </svg>
+    </span>
+  );
+}
+
 export function Lamp({ state, pulse, title }: { state: LampState; pulse?: boolean; title?: string }) {
   const cls = state === "off" ? "" : ` ${state}`;
   return <span className={`lamp${cls}${pulse ? " pulse" : ""}`} title={title} aria-hidden="true" />;

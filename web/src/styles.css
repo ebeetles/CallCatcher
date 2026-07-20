@@ -108,14 +108,6 @@ a:hover {
   justify-content: center;
   flex: none;
 }
-.brand-mark::after {
-  content: "";
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: #f5fa90;
-  box-shadow: inset 0 0 0 2.5px rgba(8, 95, 149, 0.35);
-}
 .brand-sub {
   font-family: var(--mono);
   font-size: 10px;

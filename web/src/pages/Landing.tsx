@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth";
-import { Lamp } from "../ui";
+import { Lamp, BrandMark } from "../ui";
 
 /**
  * Public marketing page (logged-out "/" in supabase mode) — the catalog page
@@ -117,7 +117,7 @@ export default function Landing() {
     <div className="landing">
       <header className="landing-top">
         <span className="brand">
-          <span className="brand-mark" />
+          <BrandMark />
           CallCatcher
         </span>
         <nav>

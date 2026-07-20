@@ -2,7 +2,7 @@ import { createContext, useContext, useState } from "react";
 import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { getDashboardToken, getStatus, setDashboardToken, useLoad } from "./api";
 import type { StatusResponse } from "./types";
-import { Lamp, Spinner, ErrorNote } from "./ui";
+import { Lamp, Spinner, ErrorNote, BrandMark } from "./ui";
 import { AuthProvider, useAuth } from "./auth";
 import { LoginPage, ResetPage, SignupPage } from "./pages/AuthPages";
 import BusinessList from "./pages/BusinessList";
@@ -182,7 +182,7 @@ function Console() {
       <div className="shell">
         <aside className="rail">
           <Link to="/" className="brand">
-            <span className="brand-mark" />
+            <BrandMark />
             CallCatcher
           </Link>
           <div className="brand-sub">Console</div>

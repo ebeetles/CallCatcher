@@ -1,6 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
+import { BrandMark } from "../ui";
 
 /** Centered card shell shared by the login/signup/reset screens. */
 function AuthShell({ title, sub, children, footer }: { title: string; sub?: ReactNode; children: ReactNode; footer?: ReactNode }) {
@@ -8,7 +9,7 @@ function AuthShell({ title, sub, children, footer }: { title: string; sub?: Reac
     <div className="shell" style={{ alignItems: "center", justifyContent: "center", display: "flex", minHeight: "100vh" }}>
       <div style={{ maxWidth: 420, width: "100%" }}>
         <Link to="/" className="brand" style={{ display: "inline-flex", marginBottom: 14 }}>
-          <span className="brand-mark" />
+          <BrandMark />
           CallCatcher
         </Link>
         <div className="panel">
