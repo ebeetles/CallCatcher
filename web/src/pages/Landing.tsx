@@ -29,52 +29,66 @@ function useReducedMotion(): boolean {
   return reduced;
 }
 
-/** The live call ticket: rings, answers, types the transcript, prints the ticket. */
+const RING_MS = 1400;
+const CHAR_MS = 22;
+const TURN_GAP_MS = 520;
+
+/**
+ * The live call ticket: rings, answers, types the transcript, prints the
+ * ticket. The frame is derived purely from elapsed time, so remounts
+ * (StrictMode, HMR) can't fork the animation.
+ */
 function CallTicket() {
   const reduced = useReducedMotion();
   const [phase, setPhase] = useState<"ringing" | "live" | "done">(reduced ? "done" : "ringing");
   const [turns, setTurns] = useState<Array<{ role: string; text: string }>>(reduced ? DEMO_TURNS : []);
-  const timer = useRef<number | undefined>(undefined);
+  const startRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    if (reduced) return;
-    let turn = 0;
-    let char = 0;
-    const tick = () => {
-      if (turn >= DEMO_TURNS.length) {
-        setPhase("done");
+    if (reduced) {
+      setPhase("done");
+      setTurns(DEMO_TURNS);
+      return;
+    }
+    startRef.current ??= performance.now();
+    let lastFrame = "";
+    const iv = window.setInterval(() => {
+      const elapsed = performance.now() - (startRef.current ?? 0) - RING_MS;
+      if (elapsed < 0) return; // still ringing
+      let rem = elapsed;
+      const out: Array<{ role: string; text: string }> = [];
+      for (const t of DEMO_TURNS) {
+        const typeMs = t.text.length * CHAR_MS;
+        if (rem >= typeMs + TURN_GAP_MS) {
+          out.push(t);
+          rem -= typeMs + TURN_GAP_MS;
+          continue;
+        }
+        const chars = Math.floor(rem / CHAR_MS);
+        if (chars > 0) out.push({ role: t.role, text: t.text.slice(0, chars) });
+        const frame = out.map((o) => o.text.length).join(",");
+        if (frame !== lastFrame) {
+          lastFrame = frame;
+          setPhase("live");
+          setTurns(out);
+        }
         return;
       }
-      const cur = DEMO_TURNS[turn];
-      char += 2 + Math.floor(Math.random() * 2);
-      const partial = cur.text.slice(0, char);
-      setTurns((prev) => {
-        const next = prev.slice(0, turn);
-        next[turn] = { role: cur.role, text: partial };
-        return next;
-      });
-      if (char >= cur.text.length) {
-        turn += 1;
-        char = 0;
-        timer.current = window.setTimeout(tick, 550);
-      } else {
-        timer.current = window.setTimeout(tick, 28);
-      }
-    };
-    timer.current = window.setTimeout(() => {
-      setPhase("live");
-      tick();
-    }, 1400);
-    return () => window.clearTimeout(timer.current);
+      setTurns(DEMO_TURNS);
+      setPhase("done");
+      window.clearInterval(iv);
+    }, 66);
+    return () => window.clearInterval(iv);
   }, [reduced]);
 
+  const secs = Math.min(41, Math.round(Math.max(0, performance.now() - (startRef.current ?? 0) - RING_MS) / 300));
   return (
     <div className="callticket" aria-label="Example call answered by a CallCatcher receptionist">
       <div className="callticket-head">
         <Lamp state={phase === "ringing" ? "bell" : phase === "live" ? "live" : "ok"} pulse={phase !== "done"} />
         <span className="mono">LINE 04 · SUNRISE DENTAL</span>
         <span className="callticket-status mono">
-          {phase === "ringing" ? "RINGING…" : phase === "live" ? "ANSWERED · 00:0" + Math.min(9, turns.length * 2) : "LOGGED · 00:41"}
+          {phase === "ringing" ? "RINGING…" : phase === "live" ? `ANSWERED · 00:${String(secs).padStart(2, "0")}` : "LOGGED · 00:41"}
         </span>
       </div>
       <div className="callticket-body">

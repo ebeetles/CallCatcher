@@ -79,7 +79,17 @@ Plan: [SAAS_PLAN.md](SAAS_PLAN.md). Update this file as work lands; any session 
         paywall integration — 60 tests green
   - Elwin setup needed later (SAAS_SETUP.md in P7): Stripe products/prices, webhook endpoint,
     STRIPE_* + APP_URL envs
-- [ ] Phase 6 — Landing page, onboarding empty-state, /admin tenants view
+- [x] **Phase 6 — Landing, admin** (2026-07-19)
+  - [x] Public landing at "/" (supabase mode, signed out): telecom-manual marketing page —
+        hero with a self-typing call-ticket demo (deterministic elapsed-time animation,
+        reduced-motion static), numbered go-live steps, equipment board, pricing grid from
+        /api/public/config, CTAs → /signup. Verified full-page in browser.
+  - [x] /api/admin/tenants (+ /suspend /reactivate w/ subaccount status change), 404-hidden
+        from non-admins; AdminPage table + Tenants nav for platform admins; admin test in
+        tenancy.test.ts — 61 tests green
+  - [x] onboarding: existing empty-state + per-tenant seed demo covers first-run
+  - Note: browser-pane scroll+screenshot wedges on long pages (tool quirk, not app) —
+    verify tall pages via viewport resize instead
 - [ ] Phase 7 — Docs (README, SAAS_SETUP.md, .env.example), security sweep, e2e verify
 
 ## Notes / decisions log
