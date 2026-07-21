@@ -115,25 +115,33 @@ export function ensureDemoSeed(): string {
     .find((b) => b.name === DEMO_BUSINESS_INPUT.name);
   const biz = existing ?? businesses.create(DEMO_BUSINESS_INPUT, DEMO_TENANT_ID);
 
-  if (!receptionists.activeForBusiness(biz.id)) {
-    const defaults = defaultProviders();
-    const rcp: Omit<ReceptionistConfig, "id" | "version" | "active" | "createdAt"> = {
-      businessId: biz.id,
-      systemPrompt: DEMO_SYSTEM_PROMPT,
-      greeting: DEMO_GREETING,
-      personality: "friendly",
-      voice: { provider: defaults.tts, voiceId: defaults.tts === "deepgram" ? "aura-2-thalia-en" : "tone-a" },
-      llm: {
-        provider: defaults.llm,
-        model: defaults.llm === "anthropic" ? config.callModelAnthropic : defaults.llm === "openai" ? config.callModelOpenai : "mock",
-        maxTokens: 512,
-      },
-      sttProvider: defaults.stt,
-      tools: ALL_TOOLS,
-      maxCallSeconds: DEMO_MAX_CALL_SECONDS,
-    };
-    receptionists.create(rcp);
-  }
+  // Build the receptionist config against the server's *current* providers, and
+  // (re)create it whenever the active one is missing or stale. Without this, a
+  // receptionist seeded under one provider set (e.g. mock during a test run)
+  // would stick even after the server restarts with real keys.
+  const defaults = defaultProviders();
+  const rcp: Omit<ReceptionistConfig, "id" | "version" | "active" | "createdAt"> = {
+    businessId: biz.id,
+    systemPrompt: DEMO_SYSTEM_PROMPT,
+    greeting: DEMO_GREETING,
+    personality: "friendly",
+    voice: { provider: defaults.tts, voiceId: defaults.tts === "deepgram" ? "aura-2-thalia-en" : "tone-a" },
+    llm: {
+      provider: defaults.llm,
+      model: defaults.llm === "anthropic" ? config.callModelAnthropic : defaults.llm === "openai" ? config.callModelOpenai : "mock",
+      maxTokens: 512,
+    },
+    sttProvider: defaults.stt,
+    tools: ALL_TOOLS,
+    maxCallSeconds: DEMO_MAX_CALL_SECONDS,
+  };
+  const active = receptionists.activeForBusiness(biz.id);
+  const stale =
+    !active ||
+    active.sttProvider !== rcp.sttProvider ||
+    active.llm.provider !== rcp.llm.provider ||
+    active.voice.provider !== rcp.voice.provider;
+  if (stale) receptionists.create(rcp);
 
   cachedDemoBusinessId = biz.id;
   return biz.id;
