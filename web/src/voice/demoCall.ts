@@ -11,6 +11,40 @@ import { base64ToBytes, bytesToBase64, float32ToMulaw, mulawToFloat32, resample 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 const WS_BASE = (API_BASE || window.location.origin).replace(/^http/, "ws");
 const TARGET_RATE = 8000;
+const DEV_KEY_STORAGE = "cc_demo_dev_key";
+
+/** One-time capture of ?devkey=... into localStorage, so the operator can
+ *  bookmark a link once and get unlimited demo calls from then on — never
+ *  advertised, just a query param the URL bar remembers. */
+function captureDevKeyFromUrl(): void {
+  try {
+    const url = new URL(window.location.href);
+    const key = url.searchParams.get("devkey");
+    if (key) {
+      localStorage.setItem(DEV_KEY_STORAGE, key);
+      url.searchParams.delete("devkey");
+      window.history.replaceState({}, "", url.toString());
+    }
+  } catch {
+    // ignore (e.g. SSR or restricted storage)
+  }
+}
+
+export function hasDemoDevKey(): boolean {
+  try {
+    return !!localStorage.getItem(DEV_KEY_STORAGE);
+  } catch {
+    return false;
+  }
+}
+
+function devKey(): string | undefined {
+  try {
+    return localStorage.getItem(DEV_KEY_STORAGE) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export type DemoCallStatus = "requesting-mic" | "connecting" | "live" | "ended";
 
@@ -115,7 +149,12 @@ export function startDemoCall(handlers: DemoCallHandlers): DemoCallController {
   const run = async () => {
     try {
       handlers.onStatus("requesting-mic");
-      const tokenRes = await fetch(`${API_BASE}/api/public/demo-voice-token`, { method: "POST" });
+      captureDevKeyFromUrl();
+      const key = devKey();
+      const tokenRes = await fetch(`${API_BASE}/api/public/demo-voice-token`, {
+        method: "POST",
+        headers: key ? { "x-demo-dev-key": key } : undefined,
+      });
       if (!tokenRes.ok) {
         const body = await tokenRes.json().catch(() => undefined);
         throw new Error(body?.error || (tokenRes.status === 429 ? "The live demo is busy — try again shortly." : "Couldn't start the demo."));

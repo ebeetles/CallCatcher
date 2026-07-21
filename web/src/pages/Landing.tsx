@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth";
 import { streamDemoChat } from "../api";
-import { startDemoCall, type DemoCallController, type DemoCallStatus } from "../voice/demoCall";
+import { hasDemoDevKey, startDemoCall, type DemoCallController, type DemoCallStatus } from "../voice/demoCall";
 import { Lamp, BrandMark } from "../ui";
 
 /**
@@ -87,9 +87,12 @@ function DemoConsole() {
           setPartial("");
           setLevel(0);
           callRef.current = null;
-          // Brief cooldown so the button can't be hammered to spin up calls.
-          setCooldown(true);
-          window.setTimeout(() => setCooldown(false), 4000);
+          // Brief cooldown so the button can't be hammered to spin up calls
+          // (skipped for the operator's own dev-key testing).
+          if (!hasDemoDevKey()) {
+            setCooldown(true);
+            window.setTimeout(() => setCooldown(false), 4000);
+          }
         }
       },
       onTranscript: (role, text, isPartial) => {

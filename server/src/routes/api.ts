@@ -231,15 +231,30 @@ export function registerApiRoutes(app: FastifyInstance) {
    *  (See PUBLIC_API_PATHS in app.ts.) */
   app.post(
     "/api/public/demo-voice-token",
-    { config: { rateLimit: { max: 6, timeWindow: "1 minute" } } },
+    {
+      config: {
+        rateLimit: {
+          max: 6,
+          timeWindow: "1 minute",
+          // Operator's own testing key skips this route limiter too (see below).
+          allowList: (req: FastifyRequest) =>
+            !!config.demoDevKey && req.headers["x-demo-dev-key"] === config.demoDevKey,
+        },
+      },
+    },
     async (req, reply) => {
-      if (!allowDemoVoiceForIp(clientIp(req))) {
-        return reply
-          .code(429)
-          .send({ error: "You've reached the live-demo limit for now. Start a free trial to keep going." });
-      }
-      if (!allowDemoVoiceGlobal()) {
-        return reply.code(429).send({ error: "The live demo is busy right now — please try again in a moment." });
+      // Same key also bypasses the per-IP/global throttle below (never
+      // advertised publicly). The per-call 60s hard cap still applies.
+      const isDev = !!config.demoDevKey && req.headers["x-demo-dev-key"] === config.demoDevKey;
+      if (!isDev) {
+        if (!allowDemoVoiceForIp(clientIp(req))) {
+          return reply
+            .code(429)
+            .send({ error: "You've reached the live-demo limit for now. Start a free trial to keep going." });
+        }
+        if (!allowDemoVoiceGlobal()) {
+          return reply.code(429).send({ error: "The live demo is busy right now — please try again in a moment." });
+        }
       }
       const businessId = ensureDemoSeed();
       return { token: mintStreamToken({ businessId, web: true }), expiresInSec: 300 };
