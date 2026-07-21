@@ -144,7 +144,10 @@ export function ensureDemoSeed(): string {
     !active ||
     active.sttProvider !== rcp.sttProvider ||
     active.llm.provider !== rcp.llm.provider ||
-    active.voice.provider !== rcp.voice.provider;
+    active.voice.provider !== rcp.voice.provider ||
+    active.voice.voiceId !== rcp.voice.voiceId ||
+    active.systemPrompt !== rcp.systemPrompt ||
+    active.greeting !== rcp.greeting;
   if (stale) receptionists.create(rcp);
 
   cachedDemoBusinessId = biz.id;
