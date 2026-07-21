@@ -3,6 +3,13 @@ import { z } from "zod";
 import { appointments, businesses, calls, messages, phoneNumbers, receptionists, turns } from "../db.ts";
 import type { BusinessInput, TenantScope } from "../db.ts";
 import { defaultHours } from "../types.ts";
+import {
+  DEMO_GREETING,
+  DEMO_PROFILE,
+  DEMO_SYSTEM_PROMPT,
+  ensureDemoSeed,
+  executeDemoTool,
+} from "../demo.ts";
 import { ALL_TOOLS, buildGreeting, buildSystemPrompt } from "../promptFactory.ts";
 import { authMode, config, defaultProviders, providerStatus } from "../config.ts";
 import { getLlm, listVoices } from "../providers/registry.ts";
@@ -17,6 +24,47 @@ import { mintStreamToken } from "../security.ts";
 import { currentMonth, usage } from "../db.ts";
 import { entitlements, entitlementSummary, PLANS, PUBLIC_PLAN_IDS } from "../plans.ts";
 import { billingEnabled } from "../billing/stripe.ts";
+
+// Guardrails on public voice-demo starts, protecting the provider budget.
+// Two layers: a global ceiling (distributed abuse) and a per-IP window (one
+// visitor sitting on "Talk again"). Each demo call is separately capped at 60s
+// server-side. Real client IP is read from the tunnel headers when present.
+const DEMO_VOICE_MAX_PER_MIN = 20; // global
+const DEMO_VOICE_PER_IP_MAX = 3; // per IP...
+const DEMO_VOICE_PER_IP_WINDOW_MS = 10 * 60_000; // ...per 10 minutes
+
+let demoVoiceWindowStart = 0;
+let demoVoiceCount = 0;
+function allowDemoVoiceGlobal(): boolean {
+  const now = Date.now();
+  if (now - demoVoiceWindowStart > 60_000) {
+    demoVoiceWindowStart = now;
+    demoVoiceCount = 0;
+  }
+  if (demoVoiceCount >= DEMO_VOICE_MAX_PER_MIN) return false;
+  demoVoiceCount++;
+  return true;
+}
+
+const demoVoiceByIp = new Map<string, number[]>();
+function clientIp(req: FastifyRequest): string {
+  return (
+    (req.headers["cf-connecting-ip"] as string) ||
+    ((req.headers["x-forwarded-for"] as string) ?? "").split(",")[0].trim() ||
+    req.ip
+  );
+}
+function allowDemoVoiceForIp(ip: string): boolean {
+  const now = Date.now();
+  const hits = (demoVoiceByIp.get(ip) ?? []).filter((t) => now - t < DEMO_VOICE_PER_IP_WINDOW_MS);
+  if (hits.length >= DEMO_VOICE_PER_IP_MAX) {
+    demoVoiceByIp.set(ip, hits);
+    return false;
+  }
+  hits.push(now);
+  demoVoiceByIp.set(ip, hits);
+  return true;
+}
 
 /** Tenant visibility of the authenticated request (auth hook guarantees req.auth). */
 function scopeOf(req: FastifyRequest): TenantScope {
@@ -129,7 +177,89 @@ export function registerApiRoutes(app: FastifyInstance) {
         blurb: p.blurb,
       };
     }),
+    demo: { name: DEMO_PROFILE.name, greeting: DEMO_GREETING },
   }));
+
+  /** Public, unauthenticated demo chat (see PUBLIC_API_PATHS). Runs a real agent
+   *  turn against the built-in demo receptionist with simulated tools. Tightly
+   *  rate-limited since it spends the operator's LLM budget. */
+  app.post("/api/public/demo-chat", { config: { rateLimit: { max: 12, timeWindow: "1 minute" } } }, async (req, reply) => {
+    const body = (req.body ?? {}) as { history?: Array<{ role: string; text: string }> };
+    const history: HistoryItem[] = (body.history ?? [])
+      .filter((h) => (h.role === "user" || h.role === "assistant") && typeof h.text === "string")
+      .map((h) => ({ role: h.role as "user" | "assistant", text: h.text.slice(0, 1000) }))
+      .slice(-12); // cap turns fed back to the model
+    if (history.length === 0 || history[history.length - 1].role !== "user") {
+      return reply.code(400).send({ error: "history must end with a user turn" });
+    }
+
+    reply.raw.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    });
+    const send = (obj: unknown) => reply.raw.write(`data: ${JSON.stringify(obj)}\n\n`);
+    const ac = new AbortController();
+    reply.raw.on("close", () => ac.abort());
+
+    const defaults = defaultProviders();
+    try {
+      const result = await runAgentTurn({
+        llm: getLlm(defaults.llm),
+        model: defaults.llm === "anthropic" ? config.callModelAnthropic : defaults.llm === "openai" ? config.callModelOpenai : "mock",
+        maxTokens: 512,
+        system: resolveSystemPrompt(DEMO_SYSTEM_PROMPT, DEMO_PROFILE),
+        history,
+        tools: toolDefsFor(ALL_TOOLS, DEMO_PROFILE),
+        signal: ac.signal,
+        onTextDelta: (delta) => send({ type: "text", delta }),
+        onToolExecuted: (_call, outcome) => send({ type: "tool", summary: outcome.summary }),
+        executeTool: (call) => executeDemoTool(call),
+      });
+      send({ type: "done", endAction: result.endAction, error: result.error, firstTokenMs: result.firstTokenMs });
+    } catch (err: any) {
+      send({ type: "done", error: String(err?.message ?? err) });
+    }
+    reply.raw.end();
+    return reply;
+  });
+
+  /** Public, unauthenticated token for one browser voice-demo call. Mints a
+   *  single-use media-stream token bound to the seeded demo business, so the
+   *  browser mic can drive the *real* voice pipeline. Guardrails: per-IP rate
+   *  limit here + a global ceiling + the demo receptionist's 60s hard cap.
+   *  (See PUBLIC_API_PATHS in app.ts.) */
+  app.post(
+    "/api/public/demo-voice-token",
+    {
+      config: {
+        rateLimit: {
+          max: 6,
+          timeWindow: "1 minute",
+          // Operator's own testing key skips this route limiter too (see below).
+          allowList: (req: FastifyRequest) =>
+            !!config.demoDevKey && req.headers["x-demo-dev-key"] === config.demoDevKey,
+        },
+      },
+    },
+    async (req, reply) => {
+      // Same key also bypasses the per-IP/global throttle below (never
+      // advertised publicly). The per-call 60s hard cap still applies.
+      const isDev = !!config.demoDevKey && req.headers["x-demo-dev-key"] === config.demoDevKey;
+      if (!isDev) {
+        if (!allowDemoVoiceForIp(clientIp(req))) {
+          return reply
+            .code(429)
+            .send({ error: "You've reached the live-demo limit for now. Start a free trial to keep going." });
+        }
+        if (!allowDemoVoiceGlobal()) {
+          return reply.code(429).send({ error: "The live demo is busy right now — please try again in a moment." });
+        }
+      }
+      const businessId = ensureDemoSeed();
+      return { token: mintStreamToken({ businessId, web: true }), expiresInSec: 300 };
+    }
+  );
 
   // ---------- meta ----------
   app.get("/api/status", async (req) => {

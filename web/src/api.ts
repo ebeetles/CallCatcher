@@ -171,18 +171,8 @@ export const setAppointmentStatus = (apptId: string, status: "new" | "confirmed"
   api<{ ok: true }>(`/api/appointments/${apptId}`, { method: "PATCH", body: JSON.stringify({ status }) });
 
 // ---------- chat simulator (POST + SSE body) ----------
-export async function streamChat(
-  bizId: string,
-  history: Array<{ role: "user" | "assistant"; text: string }>,
-  onEvent: (e: ChatEvent) => void,
-  signal?: AbortSignal
-): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/businesses/${bizId}/chat`, {
-    method: "POST",
-    headers: { ...(await authHeaders()), "content-type": "application/json" },
-    body: JSON.stringify({ history }),
-    signal,
-  });
+/** Consume a `text/event-stream` of `data: {json}` frames, dispatching each parsed event. */
+async function consumeChatStream(res: Response, onEvent: (e: ChatEvent) => void): Promise<void> {
   if (!res.ok) {
     const body = await res.json().catch(() => undefined);
     throw new ApiError(res.status, errorText(body) || `HTTP ${res.status}`);
@@ -209,6 +199,36 @@ export async function streamChat(
       }
     }
   }
+}
+
+export async function streamChat(
+  bizId: string,
+  history: Array<{ role: "user" | "assistant"; text: string }>,
+  onEvent: (e: ChatEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/businesses/${bizId}/chat`, {
+    method: "POST",
+    headers: { ...(await authHeaders()), "content-type": "application/json" },
+    body: JSON.stringify({ history }),
+    signal,
+  });
+  await consumeChatStream(res, onEvent);
+}
+
+/** Public landing-page demo — same event stream, no auth, no business id. */
+export async function streamDemoChat(
+  history: Array<{ role: "user" | "assistant"; text: string }>,
+  onEvent: (e: ChatEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/public/demo-chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ history }),
+    signal,
+  });
+  await consumeChatStream(res, onEvent);
 }
 
 // ---------- hooks ----------

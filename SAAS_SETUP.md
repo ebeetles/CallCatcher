@@ -105,6 +105,28 @@ business data leaves SQLite.
 The web dashboard needs **no build-time configuration** — it fetches the Supabase URL + anon
 key at runtime from `GET /api/public/config`.
 
+### Google sign-in (optional, recommended)
+
+The login/signup pages show a "Continue with Google" button; it's inert until you enable the
+Google provider. No code or env changes — Supabase + Google config only:
+
+1. **Google Cloud Console** ([console.cloud.google.com](https://console.cloud.google.com)) →
+   create/select a project → **APIs & Services → OAuth consent screen**: configure it
+   (External; app name + support email). While it's in **Testing** only whitelisted users can
+   log in — **Publish** it before real agencies sign up.
+2. **APIs & Services → Credentials → Create Credentials → OAuth client ID → Web application.**
+   Under **Authorized redirect URIs** add the callback Supabase shows on its Google provider
+   page: `https://<ref>.supabase.co/auth/v1/callback`. Copy the **Client ID** + **Client
+   Secret**.
+3. **Supabase → Authentication → Providers → Google**: flip **Enable** on, paste the Client ID
+   (the "Client ID (for OAuth)" field — *not* the "Client IDs" One Tap box) and Client Secret,
+   Save.
+4. Ensure every origin the app runs on is in Supabase's **Redirect URLs** (step 5 above) —
+   the OAuth round-trip returns there.
+
+Gotchas: `provider is not enabled` means the Enable toggle didn't save; a redirect error means
+the origin is missing from the allowlist.
+
 ## Step 4 — Stripe (billing)
 
 Billing is optional: leave all `STRIPE_*` empty and plans are still enforced (trial → paywall)

@@ -213,6 +213,8 @@ export interface PublicConfig {
   supabaseAnonKey: string;
   billingEnabled: boolean;
   plans: PublicPlan[];
+  /** Built-in landing-page demo receptionist. */
+  demo?: { name: string; greeting: string };
 }
 
 export interface UsageSummary {

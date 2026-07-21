@@ -41,6 +41,14 @@ export const config = {
    */
   dashboardToken: process.env.DASHBOARD_TOKEN || "",
 
+  /**
+   * Optional shared secret that exempts the holder from the public demo's
+   * per-IP/global voice-call throttles (see routes/api.ts demo-voice-token).
+   * For the operator's own testing only — never advertise it publicly. The
+   * per-call 60s hard cap still applies regardless.
+   */
+  demoDevKey: process.env.DEMO_DEV_KEY || "",
+
   // ---------- SaaS auth (Supabase) ----------
   /** Supabase project URL, e.g. https://abcd.supabase.co — enables supabase auth mode. */
   supabaseUrl: (process.env.SUPABASE_URL || "").replace(/\/$/, ""),

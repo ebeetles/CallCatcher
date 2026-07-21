@@ -1,110 +1,273 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth";
+import { streamDemoChat } from "../api";
+import { hasDemoDevKey, startDemoCall, type DemoCallController, type DemoCallStatus } from "../voice/demoCall";
 import { Lamp, BrandMark } from "../ui";
 
 /**
  * Public marketing page (logged-out "/" in supabase mode) — the catalog page
- * of the telecom-manual design system. Signature element: a switchboard line
- * card that answers a call in real time, typing out the transcript and
- * printing the appointment ticket the receptionist captured.
+ * of the telecom-manual design system. Signature element: a live switchboard
+ * line card the visitor can actually talk to — a real AI receptionist for a
+ * demo dental clinic, answering, quoting prices, and printing appointment
+ * tickets, over the public /api/public/demo-chat endpoint.
  */
 
-const DEMO_TURNS: Array<{ role: "caller" | "ai"; text: string }> = [
-  { role: "ai", text: "Thanks for calling Sunrise Dental, this is the front desk. How can I help?" },
-  { role: "caller", text: "Hi — do you have anything Friday afternoon? My crown came loose." },
-  { role: "ai", text: "Ouch — we can get you in. Friday we're open till 2. Can I grab your name and number?" },
-  { role: "caller", text: "Jamie Rivera, 555-010-0100." },
-  { role: "ai", text: "Got it, Jamie. I've put in an urgent request for Friday — the team will text you the exact time shortly." },
+const SUGGESTIONS = [
+  "What is CallCatcher?",
+  "How much does it cost?",
+  "Book me a demo call",
 ];
 
-function useReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const on = () => setReduced(mq.matches);
-    mq.addEventListener("change", on);
-    return () => mq.removeEventListener("change", on);
-  }, []);
-  return reduced;
-}
+type DemoItem =
+  | { kind: "ai" | "caller"; text: string }
+  | { kind: "ticket"; text: string }
+  | { kind: "note"; text: string };
 
-const RING_MS = 1400;
-const CHAR_MS = 22;
-const TURN_GAP_MS = 520;
+const CALL_SECONDS = 60;
 
 /**
- * The live call ticket: rings, answers, types the transcript, prints the
- * ticket. The frame is derived purely from elapsed time, so remounts
- * (StrictMode, HMR) can't fork the animation.
+ * The live demo line card. Primary path is voice — the visitor clicks "Talk",
+ * grants the mic, and has a spoken conversation with the real receptionist over
+ * the media-stream pipeline. A text composer stays available as a fallback.
  */
-function CallTicket() {
-  const reduced = useReducedMotion();
-  const [phase, setPhase] = useState<"ringing" | "live" | "done">(reduced ? "done" : "ringing");
-  const [turns, setTurns] = useState<Array<{ role: string; text: string }>>(reduced ? DEMO_TURNS : []);
-  const startRef = useRef<number | undefined>(undefined);
+function DemoConsole() {
+  const { config } = useAuth();
+  const greeting = config?.demo?.greeting ?? "Thanks for calling! How can I help you today?";
+  const bizName = config?.demo?.name ?? "Sunrise Dental Studio";
 
+  const [items, setItems] = useState<DemoItem[]>([]);
+  const [partial, setPartial] = useState("");
+  const [input, setInput] = useState("");
+  const [streaming, setStreaming] = useState(false);
+  const [started, setStarted] = useState(false);
+  // Voice state.
+  const [call, setCall] = useState<DemoCallStatus | "idle" | "error">("idle");
+  const [level, setLevel] = useState(0);
+  const [cooldown, setCooldown] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(CALL_SECONDS);
+  const callRef = useRef<DemoCallController | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const voiceLive = call === "requesting-mic" || call === "connecting" || call === "live";
+
+  // Show the greeting before anything starts (text-mode idle state).
   useEffect(() => {
-    if (reduced) {
-      setPhase("done");
-      setTurns(DEMO_TURNS);
-      return;
-    }
-    startRef.current ??= performance.now();
-    let lastFrame = "";
-    const iv = window.setInterval(() => {
-      const elapsed = performance.now() - (startRef.current ?? 0) - RING_MS;
-      if (elapsed < 0) return; // still ringing
-      let rem = elapsed;
-      const out: Array<{ role: string; text: string }> = [];
-      for (const t of DEMO_TURNS) {
-        const typeMs = t.text.length * CHAR_MS;
-        if (rem >= typeMs + TURN_GAP_MS) {
-          out.push(t);
-          rem -= typeMs + TURN_GAP_MS;
-          continue;
-        }
-        const chars = Math.floor(rem / CHAR_MS);
-        if (chars > 0) out.push({ role: t.role, text: t.text.slice(0, chars) });
-        const frame = out.map((o) => o.text.length).join(",");
-        if (frame !== lastFrame) {
-          lastFrame = frame;
-          setPhase("live");
-          setTurns(out);
-        }
-        return;
-      }
-      setTurns(DEMO_TURNS);
-      setPhase("done");
-      window.clearInterval(iv);
-    }, 66);
-    return () => window.clearInterval(iv);
-  }, [reduced]);
+    if (!started) setItems([{ kind: "ai", text: greeting }]);
+  }, [greeting, started]);
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+      callRef.current?.stop();
+    };
+  }, []);
+  useEffect(() => {
+    bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
+  }, [items, partial]);
 
-  const secs = Math.min(41, Math.round(Math.max(0, performance.now() - (startRef.current ?? 0) - RING_MS) / 300));
+  // 60s countdown while the voice call is live.
+  useEffect(() => {
+    if (call !== "live") return;
+    setSecondsLeft(CALL_SECONDS);
+    const iv = window.setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
+    return () => window.clearInterval(iv);
+  }, [call]);
+
+  const startVoice = () => {
+    if (voiceLive || cooldown) return;
+    setStarted(true);
+    setItems([]);
+    setPartial("");
+    setLevel(0);
+    setCall("requesting-mic");
+    callRef.current = startDemoCall({
+      onStatus: (s) => {
+        setCall(s);
+        if (s === "ended") {
+          setPartial("");
+          setLevel(0);
+          callRef.current = null;
+          // Brief cooldown so the button can't be hammered to spin up calls
+          // (skipped for the operator's own dev-key testing).
+          if (!hasDemoDevKey()) {
+            setCooldown(true);
+            window.setTimeout(() => setCooldown(false), 4000);
+          }
+        }
+      },
+      onTranscript: (role, text, isPartial) => {
+        if (role === "user" && isPartial) {
+          setPartial(text);
+          return;
+        }
+        setPartial("");
+        if (role === "tool") setItems((prev) => [...prev, { kind: "ticket", text }]);
+        else setItems((prev) => [...prev, { kind: role === "assistant" ? "ai" : "caller", text }]);
+      },
+      onLevel: (l) => setLevel(l),
+      onError: (msg) => {
+        setCall("error");
+        setItems((prev) => [...prev, { kind: "note", text: msg }]);
+      },
+    });
+  };
+
+  const hangUp = () => {
+    callRef.current?.stop();
+    callRef.current = null;
+    setCall("idle");
+    setPartial("");
+  };
+
+  const send = async (raw: string) => {
+    const text = raw.trim();
+    if (!text || streaming || voiceLive) return;
+    setInput("");
+    setStarted(true);
+
+    const history: Array<{ role: "user" | "assistant"; text: string }> = [];
+    for (const it of items) {
+      if (it.kind === "ai") history.push({ role: "assistant", text: it.text });
+      else if (it.kind === "caller") history.push({ role: "user", text: it.text });
+    }
+    history.push({ role: "user", text });
+
+    setItems((prev) => [...prev, { kind: "caller", text }, { kind: "ai", text: "" }]);
+    setStreaming(true);
+    const ac = new AbortController();
+    abortRef.current = ac;
+
+    const appendToAi = (delta: string) =>
+      setItems((prev) => {
+        const next = [...prev];
+        for (let i = next.length - 1; i >= 0; i--) {
+          if (next[i].kind === "ai") {
+            next[i] = { kind: "ai", text: (next[i] as { text: string }).text + delta };
+            break;
+          }
+        }
+        return next;
+      });
+
+    try {
+      await streamDemoChat(
+        history,
+        (ev) => {
+          if (ev.type === "text") appendToAi(ev.delta);
+          else if (ev.type === "tool") setItems((prev) => [...prev, { kind: "ticket", text: ev.summary }, { kind: "ai", text: "" }]);
+          else if (ev.type === "done" && ev.error) setItems((prev) => [...prev, { kind: "note", text: ev.error! }]);
+        },
+        ac.signal
+      );
+    } catch (e) {
+      if (!(e instanceof DOMException && e.name === "AbortError")) {
+        setItems((prev) => [...prev, { kind: "note", text: e instanceof Error ? e.message : String(e) }]);
+      }
+    } finally {
+      setItems((prev) => prev.filter((it) => !(it.kind === "ai" && it.text === "")));
+      setStreaming(false);
+    }
+  };
+
+  const statusLabel = voiceLive
+    ? call === "requesting-mic"
+      ? "ALLOW MIC…"
+      : call === "connecting"
+        ? "CONNECTING…"
+        : `LIVE · 00:${String(secondsLeft).padStart(2, "0")}`
+    : streaming
+      ? "LIVE"
+      : "TRY IT →";
+
   return (
-    <div className="callticket" aria-label="Example call answered by a CallCatcher receptionist">
+    <div className="callticket" aria-label={`Live demo call with the ${bizName} AI receptionist`}>
       <div className="callticket-head">
-        <Lamp state={phase === "ringing" ? "bell" : phase === "live" ? "live" : "ok"} pulse={phase !== "done"} />
-        <span className="mono">LINE 04 · SUNRISE DENTAL</span>
-        <span className="callticket-status mono">
-          {phase === "ringing" ? "RINGING…" : phase === "live" ? `ANSWERED · 00:${String(secs).padStart(2, "0")}` : "LOGGED · 00:41"}
-        </span>
+        <Lamp state={call === "live" || streaming ? "live" : call === "error" ? "bell" : "ok"} pulse={voiceLive || streaming} />
+        <span className="mono">LINE 04 · {bizName.toUpperCase()}</span>
+        <span className="callticket-status mono">{statusLabel}</span>
       </div>
-      <div className="callticket-body">
-        {turns.map((t, i) => (
-          <p key={i} className={`ct-turn ${t.role}`}>
-            <span className="ct-who mono">{t.role === "ai" ? "AI" : "CALLER"}</span>
-            {t.text}
+      <div className="callticket-body" ref={bodyRef}>
+        {items.length === 0 && !partial && !voiceLive ? (
+          <p className="ct-turn ai">
+            <span className="ct-who mono">AI</span>
+            {greeting}
           </p>
-        ))}
-        {phase === "done" ? (
-          <div className="ct-ticket">
-            <span className="mono">📅 APPOINTMENT REQUEST — PRINTED TO INBOX</span>
-            Jamie Rivera · crown repair · Friday PM · 555-010-0100 · urgent
-          </div>
+        ) : null}
+        {items.map((it, i) =>
+          it.kind === "ticket" ? (
+            <div key={i} className="ct-ticket">
+              <span className="mono">CAPTURED — PRINTED TO INBOX</span>
+              {it.text}
+            </div>
+          ) : it.kind === "note" ? (
+            <p key={i} className="ct-note mono">{it.text}</p>
+          ) : (
+            <p key={i} className={`ct-turn ${it.kind}`}>
+              <span className="ct-who mono">{it.kind === "ai" ? "AI" : "YOU"}</span>
+              {it.text || (streaming ? "…" : "")}
+            </p>
+          )
+        )}
+        {partial ? (
+          <p className="ct-turn caller partial">
+            <span className="ct-who mono">YOU</span>
+            {partial}
+          </p>
         ) : null}
       </div>
+
+      {voiceLive ? (
+        <div className="ct-callbar">
+          <div className="ct-meter" aria-hidden="true">
+            {[0, 1, 2, 3, 4].map((n) => (
+              <span key={n} style={{ transform: `scaleY(${call === "live" ? Math.max(0.15, Math.min(1, level * (1 + n * 0.5))) : 0.15})` }} />
+            ))}
+          </div>
+          <span className="ct-callhint mono">
+            {call === "requesting-mic" ? "Allow your microphone…" : call === "connecting" ? "Connecting…" : "Speak — she's listening"}
+          </span>
+          <button type="button" className="btn btn-danger sm" onClick={hangUp}>
+            Hang up
+          </button>
+        </div>
+      ) : (
+        <div className="ct-talkbar">
+          <button type="button" className="btn btn-primary ct-talk" onClick={startVoice} disabled={cooldown}>
+            <span className="ct-talk-dot" aria-hidden="true" />
+            {cooldown ? "One moment…" : started ? "Talk again" : "Talk to the receptionist"}
+          </button>
+          <span className="ct-talk-note mono">Uses your mic · real AI voice · ~60s</span>
+        </div>
+      )}
+
+      {!voiceLive && !started ? (
+        <div className="ct-suggest">
+          {SUGGESTIONS.map((s) => (
+            <button key={s} type="button" className="ct-chip" onClick={() => send(s)} disabled={streaming}>
+              {s}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <form
+        className="ct-composer"
+        onSubmit={(e) => {
+          e.preventDefault();
+          send(input);
+        }}
+      >
+        <input
+          className="input"
+          placeholder={voiceLive ? "On a call — hang up to type" : "…or type instead"}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          disabled={streaming || voiceLive}
+          aria-label="Message to the demo receptionist"
+        />
+        <button className="btn btn-primary" type="submit" disabled={streaming || voiceLive || !input.trim()}>
+          {streaming ? "…" : "Send"}
+        </button>
+      </form>
     </div>
   );
 }
@@ -157,7 +320,7 @@ export default function Landing() {
             <span>~$1/DAY PROVIDER COST</span>
           </div>
         </div>
-        <CallTicket />
+        <DemoConsole />
       </section>
 
       <section className="landing-sec" id="how">

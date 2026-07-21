@@ -24,7 +24,12 @@ declare module "fastify" {
 }
 
 /** /api paths that skip auth (health checks, bootstrap config for the web app). */
-const PUBLIC_API_PATHS = new Set(["/api/health", "/api/public/config"]);
+const PUBLIC_API_PATHS = new Set([
+  "/api/health",
+  "/api/public/config",
+  "/api/public/demo-chat",
+  "/api/public/demo-voice-token",
+]);
 
 export interface BuildAppOptions {
   /** Shrunk timers for tests. */
