@@ -14,9 +14,9 @@ import { Lamp, BrandMark } from "../ui";
  */
 
 const SUGGESTIONS = [
-  "How much is a cleaning?",
-  "Are you open Saturday?",
-  "Book me a cleaning Friday afternoon",
+  "What is CallCatcher?",
+  "How much does it cost?",
+  "Book me a demo call",
 ];
 
 type DemoItem =
@@ -44,6 +44,7 @@ function DemoConsole() {
   // Voice state.
   const [call, setCall] = useState<DemoCallStatus | "idle" | "error">("idle");
   const [level, setLevel] = useState(0);
+  const [cooldown, setCooldown] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(CALL_SECONDS);
   const callRef = useRef<DemoCallController | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -73,7 +74,7 @@ function DemoConsole() {
   }, [call]);
 
   const startVoice = () => {
-    if (voiceLive) return;
+    if (voiceLive || cooldown) return;
     setStarted(true);
     setItems([]);
     setPartial("");
@@ -86,6 +87,9 @@ function DemoConsole() {
           setPartial("");
           setLevel(0);
           callRef.current = null;
+          // Brief cooldown so the button can't be hammered to spin up calls.
+          setCooldown(true);
+          window.setTimeout(() => setCooldown(false), 4000);
         }
       },
       onTranscript: (role, text, isPartial) => {
@@ -225,9 +229,9 @@ function DemoConsole() {
         </div>
       ) : (
         <div className="ct-talkbar">
-          <button type="button" className="btn btn-primary ct-talk" onClick={startVoice}>
+          <button type="button" className="btn btn-primary ct-talk" onClick={startVoice} disabled={cooldown}>
             <span className="ct-talk-dot" aria-hidden="true" />
-            {started ? "Talk again" : "Talk to the receptionist"}
+            {cooldown ? "One moment…" : started ? "Talk again" : "Talk to the receptionist"}
           </button>
           <span className="ct-talk-note mono">Uses your mic · real AI voice · ~60s</span>
         </div>

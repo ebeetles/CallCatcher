@@ -96,7 +96,7 @@ describe("voice demo pipeline (fake browser caller)", () => {
 
     await waitFor(() => call.events.transcripts.some((t) => t.role === "assistant"), 8000, "greeting");
     await waitFor(() => call.events.audioBytes > 500, 8000, "audio");
-    expect(call.events.transcripts[0].content).toContain("Sunrise Dental Studio");
+    expect(call.events.transcripts[0].content).toContain("CallCatcher");
     expect(call.events.statuses).toContain("connected");
 
     call.say("how much is a cleaning?");

@@ -45,7 +45,7 @@ describe("public config demo block", () => {
   it("advertises the demo receptionist's name and greeting", async () => {
     const cfg = (await fetch(`${baseUrl}/api/public/config`).then((r) => r.json())) as any;
     expect(cfg.demo).toBeTruthy();
-    expect(cfg.demo.name).toBe("Sunrise Dental Studio");
+    expect(cfg.demo.name).toBe("CallCatcher");
     expect(typeof cfg.demo.greeting).toBe("string");
     expect(cfg.demo.greeting.length).toBeGreaterThan(0);
   });

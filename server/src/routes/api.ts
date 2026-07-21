@@ -25,13 +25,17 @@ import { currentMonth, usage } from "../db.ts";
 import { entitlements, entitlementSummary, PLANS, PUBLIC_PLAN_IDS } from "../plans.ts";
 import { billingEnabled } from "../billing/stripe.ts";
 
-// Global ceiling on public voice-demo starts, protecting the provider budget
-// from distributed abuse (per-IP limits alone don't). Simple rolling-minute
-// token bucket: at most N demo calls may START per minute across all callers.
-const DEMO_VOICE_MAX_PER_MIN = 20;
+// Guardrails on public voice-demo starts, protecting the provider budget.
+// Two layers: a global ceiling (distributed abuse) and a per-IP window (one
+// visitor sitting on "Talk again"). Each demo call is separately capped at 60s
+// server-side. Real client IP is read from the tunnel headers when present.
+const DEMO_VOICE_MAX_PER_MIN = 20; // global
+const DEMO_VOICE_PER_IP_MAX = 3; // per IP...
+const DEMO_VOICE_PER_IP_WINDOW_MS = 10 * 60_000; // ...per 10 minutes
+
 let demoVoiceWindowStart = 0;
 let demoVoiceCount = 0;
-function allowDemoVoiceCall(): boolean {
+function allowDemoVoiceGlobal(): boolean {
   const now = Date.now();
   if (now - demoVoiceWindowStart > 60_000) {
     demoVoiceWindowStart = now;
@@ -39,6 +43,26 @@ function allowDemoVoiceCall(): boolean {
   }
   if (demoVoiceCount >= DEMO_VOICE_MAX_PER_MIN) return false;
   demoVoiceCount++;
+  return true;
+}
+
+const demoVoiceByIp = new Map<string, number[]>();
+function clientIp(req: FastifyRequest): string {
+  return (
+    (req.headers["cf-connecting-ip"] as string) ||
+    ((req.headers["x-forwarded-for"] as string) ?? "").split(",")[0].trim() ||
+    req.ip
+  );
+}
+function allowDemoVoiceForIp(ip: string): boolean {
+  const now = Date.now();
+  const hits = (demoVoiceByIp.get(ip) ?? []).filter((t) => now - t < DEMO_VOICE_PER_IP_WINDOW_MS);
+  if (hits.length >= DEMO_VOICE_PER_IP_MAX) {
+    demoVoiceByIp.set(ip, hits);
+    return false;
+  }
+  hits.push(now);
+  demoVoiceByIp.set(ip, hits);
   return true;
 }
 
@@ -207,9 +231,14 @@ export function registerApiRoutes(app: FastifyInstance) {
    *  (See PUBLIC_API_PATHS in app.ts.) */
   app.post(
     "/api/public/demo-voice-token",
-    { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } },
-    async (_req, reply) => {
-      if (!allowDemoVoiceCall()) {
+    { config: { rateLimit: { max: 6, timeWindow: "1 minute" } } },
+    async (req, reply) => {
+      if (!allowDemoVoiceForIp(clientIp(req))) {
+        return reply
+          .code(429)
+          .send({ error: "You've reached the live-demo limit for now. Start a free trial to keep going." });
+      }
+      if (!allowDemoVoiceGlobal()) {
         return reply.code(429).send({ error: "The live demo is busy right now — please try again in a moment." });
       }
       const businessId = ensureDemoSeed();
