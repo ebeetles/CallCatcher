@@ -3,6 +3,7 @@ import { z } from "zod";
 import { appointments, businesses, calls, messages, phoneNumbers, receptionists, turns } from "../db.ts";
 import type { BusinessInput, TenantScope } from "../db.ts";
 import { defaultHours } from "../types.ts";
+import type { BusinessProfile } from "../types.ts";
 import { ALL_TOOLS, buildGreeting, buildSystemPrompt } from "../promptFactory.ts";
 import { authMode, config, defaultProviders, providerStatus } from "../config.ts";
 import { getLlm, listVoices } from "../providers/registry.ts";
@@ -107,6 +108,80 @@ function businessSummary(id: string) {
   return { ...b, number, receptionist: rcp, stats };
 }
 
+// ---------- landing-page demo ----------
+// A self-contained receptionist that the public /api/public/demo-chat endpoint
+// runs a real agent turn against — no DB row, no tenant, no persisted side
+// effects (tools are simulated below). Built once at module load.
+const DEMO_BUSINESS: BusinessProfile = {
+  id: "biz_demo",
+  tenantId: null,
+  name: "Sunrise Dental Studio",
+  industry: "dental clinic",
+  description:
+    "A friendly neighborhood dental clinic in Pasadena offering general and cosmetic dentistry for the whole family.",
+  timezone: "America/Los_Angeles",
+  address: "482 Orange Grove Blvd, Pasadena, CA",
+  website: "https://sunrisedental.example.com",
+  email: "hello@sunrisedental.example.com",
+  forwardNumber: "+15555550123",
+  notifySms: false,
+  hours: {
+    mon: { open: true, ranges: [{ start: "08:00", end: "17:00" }] },
+    tue: { open: true, ranges: [{ start: "08:00", end: "17:00" }] },
+    wed: { open: true, ranges: [{ start: "08:00", end: "17:00" }] },
+    thu: { open: true, ranges: [{ start: "08:00", end: "19:00" }] },
+    fri: { open: true, ranges: [{ start: "08:00", end: "14:00" }] },
+    sat: { open: false, ranges: [] },
+    sun: { open: false, ranges: [] },
+  },
+  services: [
+    { name: "New patient exam + X-rays", price: "$95", durationMin: 60 },
+    { name: "Teeth cleaning", price: "$120", durationMin: 45 },
+    { name: "Teeth whitening", price: "$350", durationMin: 90 },
+    { name: "Emergency visit", price: "from $150", durationMin: 30 },
+  ],
+  faqs: [
+    { question: "Do you take insurance?", answer: "Yes — we accept most PPO plans including Delta Dental, Cigna, and MetLife. We don't accept HMO plans." },
+    { question: "Is parking available?", answer: "Yes, free parking is available in the lot behind the building." },
+    { question: "Do you see kids?", answer: "Yes, we see patients ages 5 and up." },
+  ],
+  policies:
+    "24-hour cancellation notice required or a $50 fee applies. New patients should arrive 15 minutes early. We accept cash, all major credit cards, and CareCredit.",
+  notes: "Dr. Maya Chen and Dr. Robert Alvarez are the dentists. Emergencies are usually seen same-day.",
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+};
+const DEMO_SYSTEM_PROMPT = buildSystemPrompt(DEMO_BUSINESS, { personality: "friendly", tools: ALL_TOOLS });
+const DEMO_GREETING = buildGreeting(DEMO_BUSINESS, "friendly");
+
+/** Simulated tools for the demo — same shape as the real ones, but nothing is
+ *  persisted and no SMS is sent (there's no tenant to own it). */
+async function executeDemoTool(call: { name: string; input?: Record<string, unknown> }) {
+  const input = call.input ?? {};
+  const str = (k: string) => {
+    const v = input[k];
+    return typeof v === "string" && v.trim() ? v.trim() : undefined;
+  };
+  switch (call.name) {
+    case "take_message":
+      return {
+        result: "Message saved. Confirm to the caller that the team will get back to them.",
+        summary: `📝 Took a message from ${str("caller_name") ?? "caller"}${str("callback_number") ? ` (${str("callback_number")})` : ""}: "${str("message") ?? ""}"`,
+      };
+    case "request_appointment":
+      return {
+        result: "Appointment request saved. Tell the caller the team will confirm the exact time shortly.",
+        summary: `📅 Appointment request: ${str("name") ?? "caller"} — ${str("service") ?? "service TBD"} — ${str("preferred_times") ?? "time TBD"}`,
+      };
+    case "transfer_call":
+      return { result: "Transferring the caller now.", action: "transfer" as const, summary: `📞 Transferring caller — ${str("reason") ?? ""}` };
+    case "end_call":
+      return { result: "Ending the call.", action: "end" as const, summary: `👋 Call ended by assistant${str("reason") ? ` — ${str("reason")}` : ""}` };
+    default:
+      return { result: `Unknown tool: ${call.name}`, isError: true, summary: `⚠️ Unknown tool ${call.name}` };
+  }
+}
+
 export function registerApiRoutes(app: FastifyInstance) {
   // ---------- public (no auth; see PUBLIC_API_PATHS in app.ts) ----------
   app.get("/api/health", async () => ({ ok: true }));
@@ -129,7 +204,52 @@ export function registerApiRoutes(app: FastifyInstance) {
         blurb: p.blurb,
       };
     }),
+    demo: { name: DEMO_BUSINESS.name, greeting: DEMO_GREETING },
   }));
+
+  /** Public, unauthenticated demo chat (see PUBLIC_API_PATHS). Runs a real agent
+   *  turn against the built-in demo receptionist with simulated tools. Tightly
+   *  rate-limited since it spends the operator's LLM budget. */
+  app.post("/api/public/demo-chat", { config: { rateLimit: { max: 12, timeWindow: "1 minute" } } }, async (req, reply) => {
+    const body = (req.body ?? {}) as { history?: Array<{ role: string; text: string }> };
+    const history: HistoryItem[] = (body.history ?? [])
+      .filter((h) => (h.role === "user" || h.role === "assistant") && typeof h.text === "string")
+      .map((h) => ({ role: h.role as "user" | "assistant", text: h.text.slice(0, 1000) }))
+      .slice(-12); // cap turns fed back to the model
+    if (history.length === 0 || history[history.length - 1].role !== "user") {
+      return reply.code(400).send({ error: "history must end with a user turn" });
+    }
+
+    reply.raw.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    });
+    const send = (obj: unknown) => reply.raw.write(`data: ${JSON.stringify(obj)}\n\n`);
+    const ac = new AbortController();
+    reply.raw.on("close", () => ac.abort());
+
+    const defaults = defaultProviders();
+    try {
+      const result = await runAgentTurn({
+        llm: getLlm(defaults.llm),
+        model: defaults.llm === "anthropic" ? config.callModelAnthropic : defaults.llm === "openai" ? config.callModelOpenai : "mock",
+        maxTokens: 512,
+        system: resolveSystemPrompt(DEMO_SYSTEM_PROMPT, DEMO_BUSINESS),
+        history,
+        tools: toolDefsFor(ALL_TOOLS, DEMO_BUSINESS),
+        signal: ac.signal,
+        onTextDelta: (delta) => send({ type: "text", delta }),
+        onToolExecuted: (_call, outcome) => send({ type: "tool", summary: outcome.summary }),
+        executeTool: (call) => executeDemoTool(call),
+      });
+      send({ type: "done", endAction: result.endAction, error: result.error, firstTokenMs: result.firstTokenMs });
+    } catch (err: any) {
+      send({ type: "done", error: String(err?.message ?? err) });
+    }
+    reply.raw.end();
+    return reply;
+  });
 
   // ---------- meta ----------
   app.get("/api/status", async (req) => {
