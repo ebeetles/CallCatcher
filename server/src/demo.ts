@@ -129,7 +129,7 @@ export function ensureDemoSeed(): string {
     systemPrompt: DEMO_SYSTEM_PROMPT,
     greeting: DEMO_GREETING,
     personality: "friendly",
-    voice: { provider: defaults.tts, voiceId: defaults.tts === "deepgram" ? "aura-2-thalia-en" : "tone-a" },
+    voice: { provider: defaults.tts, voiceId: defaults.tts === "deepgram" ? "aura-2-andromeda-en" : "tone-a" },
     llm: {
       provider: defaults.llm,
       model: defaults.llm === "anthropic" ? config.callModelAnthropic : defaults.llm === "openai" ? config.callModelOpenai : "mock",
