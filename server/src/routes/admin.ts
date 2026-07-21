@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { businesses, tenants, usage } from "../db.ts";
 import { entitlementSummary } from "../plans.ts";
 import { setSubaccountStatus, twilioConfigured } from "../telephony/twilio.ts";
+import { DEMO_TENANT_ID } from "../demo.ts";
 
 /**
  * Platform-admin APIs (ADMIN_EMAILS users, ops token, dev mode). 404 — not
@@ -17,7 +18,10 @@ function requireAdmin(req: FastifyRequest, reply: any): boolean {
 export function registerAdminRoutes(app: FastifyInstance) {
   app.get("/api/admin/tenants", async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
-    return tenants.list().map((t) => ({
+    return tenants
+      .list()
+      .filter((t) => t.id !== DEMO_TENANT_ID) // the built-in landing demo isn't a real agency
+      .map((t) => ({
       id: t.id,
       name: t.name,
       plan: t.plan,

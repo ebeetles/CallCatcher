@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth";
 import { streamDemoChat } from "../api";
+import { startDemoCall, type DemoCallController, type DemoCallStatus } from "../voice/demoCall";
 import { Lamp, BrandMark } from "../ui";
 
 /**
@@ -23,31 +24,97 @@ type DemoItem =
   | { kind: "ticket"; text: string }
   | { kind: "note"; text: string };
 
-/** The interactive demo: type as the caller, the real receptionist answers. */
+const CALL_SECONDS = 60;
+
+/**
+ * The live demo line card. Primary path is voice — the visitor clicks "Talk",
+ * grants the mic, and has a spoken conversation with the real receptionist over
+ * the media-stream pipeline. A text composer stays available as a fallback.
+ */
 function DemoConsole() {
   const { config } = useAuth();
   const greeting = config?.demo?.greeting ?? "Thanks for calling! How can I help you today?";
   const bizName = config?.demo?.name ?? "Sunrise Dental Studio";
 
-  const [items, setItems] = useState<DemoItem[]>([{ kind: "ai", text: greeting }]);
+  const [items, setItems] = useState<DemoItem[]>([]);
+  const [partial, setPartial] = useState("");
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [started, setStarted] = useState(false);
+  // Voice state.
+  const [call, setCall] = useState<DemoCallStatus | "idle" | "error">("idle");
+  const [level, setLevel] = useState(0);
+  const [secondsLeft, setSecondsLeft] = useState(CALL_SECONDS);
+  const callRef = useRef<DemoCallController | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const voiceLive = call === "requesting-mic" || call === "connecting" || call === "live";
 
-  // Keep the greeting in sync once config arrives (only before the first turn).
+  // Show the greeting before anything starts (text-mode idle state).
   useEffect(() => {
     if (!started) setItems([{ kind: "ai", text: greeting }]);
   }, [greeting, started]);
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+      callRef.current?.stop();
+    };
+  }, []);
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
-  }, [items]);
+  }, [items, partial]);
+
+  // 60s countdown while the voice call is live.
+  useEffect(() => {
+    if (call !== "live") return;
+    setSecondsLeft(CALL_SECONDS);
+    const iv = window.setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
+    return () => window.clearInterval(iv);
+  }, [call]);
+
+  const startVoice = () => {
+    if (voiceLive) return;
+    setStarted(true);
+    setItems([]);
+    setPartial("");
+    setLevel(0);
+    setCall("requesting-mic");
+    callRef.current = startDemoCall({
+      onStatus: (s) => {
+        setCall(s);
+        if (s === "ended") {
+          setPartial("");
+          setLevel(0);
+          callRef.current = null;
+        }
+      },
+      onTranscript: (role, text, isPartial) => {
+        if (role === "user" && isPartial) {
+          setPartial(text);
+          return;
+        }
+        setPartial("");
+        if (role === "tool") setItems((prev) => [...prev, { kind: "ticket", text }]);
+        else setItems((prev) => [...prev, { kind: role === "assistant" ? "ai" : "caller", text }]);
+      },
+      onLevel: (l) => setLevel(l),
+      onError: (msg) => {
+        setCall("error");
+        setItems((prev) => [...prev, { kind: "note", text: msg }]);
+      },
+    });
+  };
+
+  const hangUp = () => {
+    callRef.current?.stop();
+    callRef.current = null;
+    setCall("idle");
+    setPartial("");
+  };
 
   const send = async (raw: string) => {
     const text = raw.trim();
-    if (!text || streaming) return;
+    if (!text || streaming || voiceLive) return;
     setInput("");
     setStarted(true);
 
@@ -95,14 +162,30 @@ function DemoConsole() {
     }
   };
 
+  const statusLabel = voiceLive
+    ? call === "requesting-mic"
+      ? "ALLOW MIC…"
+      : call === "connecting"
+        ? "CONNECTING…"
+        : `LIVE · 00:${String(secondsLeft).padStart(2, "0")}`
+    : streaming
+      ? "LIVE"
+      : "TRY IT →";
+
   return (
     <div className="callticket" aria-label={`Live demo call with the ${bizName} AI receptionist`}>
       <div className="callticket-head">
-        <Lamp state={streaming ? "live" : "ok"} pulse={streaming} />
+        <Lamp state={call === "live" || streaming ? "live" : call === "error" ? "bell" : "ok"} pulse={voiceLive || streaming} />
         <span className="mono">LINE 04 · {bizName.toUpperCase()}</span>
-        <span className="callticket-status mono">{streaming ? "LIVE" : "TRY IT →"}</span>
+        <span className="callticket-status mono">{statusLabel}</span>
       </div>
       <div className="callticket-body" ref={bodyRef}>
+        {items.length === 0 && !partial && !voiceLive ? (
+          <p className="ct-turn ai">
+            <span className="ct-who mono">AI</span>
+            {greeting}
+          </p>
+        ) : null}
         {items.map((it, i) =>
           it.kind === "ticket" ? (
             <div key={i} className="ct-ticket">
@@ -118,8 +201,39 @@ function DemoConsole() {
             </p>
           )
         )}
+        {partial ? (
+          <p className="ct-turn caller partial">
+            <span className="ct-who mono">YOU</span>
+            {partial}
+          </p>
+        ) : null}
       </div>
-      {!started ? (
+
+      {voiceLive ? (
+        <div className="ct-callbar">
+          <div className="ct-meter" aria-hidden="true">
+            {[0, 1, 2, 3, 4].map((n) => (
+              <span key={n} style={{ transform: `scaleY(${call === "live" ? Math.max(0.15, Math.min(1, level * (1 + n * 0.5))) : 0.15})` }} />
+            ))}
+          </div>
+          <span className="ct-callhint mono">
+            {call === "requesting-mic" ? "Allow your microphone…" : call === "connecting" ? "Connecting…" : "Speak — she's listening"}
+          </span>
+          <button type="button" className="btn btn-danger sm" onClick={hangUp}>
+            Hang up
+          </button>
+        </div>
+      ) : (
+        <div className="ct-talkbar">
+          <button type="button" className="btn btn-primary ct-talk" onClick={startVoice}>
+            <span className="ct-talk-dot" aria-hidden="true" />
+            {started ? "Talk again" : "Talk to the receptionist"}
+          </button>
+          <span className="ct-talk-note mono">Uses your mic · real AI voice · ~60s</span>
+        </div>
+      )}
+
+      {!voiceLive && !started ? (
         <div className="ct-suggest">
           {SUGGESTIONS.map((s) => (
             <button key={s} type="button" className="ct-chip" onClick={() => send(s)} disabled={streaming}>
@@ -137,13 +251,13 @@ function DemoConsole() {
       >
         <input
           className="input"
-          placeholder="You're the caller — ask anything…"
+          placeholder={voiceLive ? "On a call — hang up to type" : "…or type instead"}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          disabled={streaming}
+          disabled={streaming || voiceLive}
           aria-label="Message to the demo receptionist"
         />
-        <button className="btn btn-primary" type="submit" disabled={streaming || !input.trim()}>
+        <button className="btn btn-primary" type="submit" disabled={streaming || voiceLive || !input.trim()}>
           {streaming ? "…" : "Send"}
         </button>
       </form>
