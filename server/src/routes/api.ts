@@ -24,8 +24,8 @@ import { ALL_TOOLS, buildGreeting, buildSystemPrompt } from "../promptFactory.ts
 import { authMode, config, defaultProviders, providerStatus } from "../config.ts";
 import { getLlm, listVoices } from "../providers/registry.ts";
 import { runAgentTurn } from "../agent/agentLoop.ts";
-import { executeTool, toolDefsFor } from "../agent/tools.ts";
-import { resolveSystemPrompt } from "../promptFactory.ts";
+import { calendarLive, executeTool, toolDefsFor } from "../agent/tools.ts";
+import { LIVE_SCHEDULING_INSTRUCTIONS, resolveSystemPrompt } from "../promptFactory.ts";
 import { estimateMonthly, PRICING } from "../costs.ts";
 import * as twilio from "../telephony/twilio.ts";
 import { extractFromWebsite, factoryAiAvailable, refinePrompt } from "../ai/factory.ts";
@@ -740,7 +740,9 @@ export function registerApiRoutes(app: FastifyInstance) {
         llm: getLlm(rcp.llm.provider),
         model: rcp.llm.model,
         maxTokens: rcp.llm.maxTokens,
-        system: resolveSystemPrompt(rcp.systemPrompt, biz),
+        system:
+          resolveSystemPrompt(rcp.systemPrompt, biz) +
+          (calendarLive(biz) ? "\n\n" + LIVE_SCHEDULING_INSTRUCTIONS : ""),
         history,
         tools: toolDefsFor(rcp.tools, biz),
         signal: ac.signal,

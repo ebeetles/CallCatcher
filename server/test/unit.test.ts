@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SentenceChunker } from "../src/voice/sentenceChunker.ts";
 import { linearToMulawSample, mulawToLinearSample, mulawTone, pcm16ToMulaw, mulawToPcm16 } from "../src/audio/mulaw.ts";
-import { buildSystemPrompt, formatWeekHours, isOpenAt, nowContext, resolveSystemPrompt, to12h } from "../src/promptFactory.ts";
+import { buildSystemPrompt, formatWeekHours, isOpenAt, LIVE_SCHEDULING_INSTRUCTIONS, nowContext, resolveSystemPrompt, to12h } from "../src/promptFactory.ts";
 import { estimateCallCost, estimateMonthly } from "../src/costs.ts";
 import { defaultHours, type BusinessProfile } from "../src/types.ts";
 
@@ -116,9 +116,35 @@ describe("hours & prompt factory", () => {
     expect(resolved).toContain("currently OPEN");
   });
 
+  it("appointment guidance is calendar-aware, not a hard 'no calendar' claim", () => {
+    const prompt = buildSystemPrompt(fakeBusiness(), { personality: "friendly", tools: ["request_appointment"] });
+    expect(prompt).not.toContain("cannot see the live calendar");
+    expect(prompt).toContain("live-calendar scheduling section");
+    // The live section names the real tools and says it overrides the fallback.
+    expect(LIVE_SCHEDULING_INSTRUCTIONS).toContain("check_availability");
+    expect(LIVE_SCHEDULING_INSTRUCTIONS).toContain("book_appointment");
+    expect(LIVE_SCHEDULING_INSTRUCTIONS).toMatch(/OVERRIDES|supersede/i);
+  });
+
   it("nowContext reports closed days", () => {
     const ctx = nowContext(fakeBusiness(), new Date("2026-07-19T18:00:00Z"));
     expect(ctx).toContain("CLOSED");
+  });
+
+  it("nowContext dates weekdays in the business timezone, not UTC", () => {
+    // 03:00 UTC Sun Jul 26 is still 8pm Sat Jul 25 in Los Angeles. The dated
+    // weekday list must follow the business's local day so "next Monday"
+    // resolves to Jul 27 (Pacific), not Jul 28 (a UTC-shifted week).
+    const instant = new Date("2026-07-26T03:00:00Z");
+    const la = nowContext({ ...fakeBusiness(), timezone: "America/Los_Angeles" }, instant);
+    expect(la).toContain("Today is Saturday 2026-07-25");
+    expect(la).toContain("Monday 2026-07-27");
+    expect(la).not.toContain("Monday 2026-07-28");
+
+    // Same instant, a UTC business, is already Sunday Jul 26 → Monday is Jul 27 too,
+    // but "today" differs — proving the anchor is the business's own local date.
+    const utc = nowContext({ ...fakeBusiness(), timezone: "UTC" }, instant);
+    expect(utc).toContain("Today is Sunday 2026-07-26");
   });
 });
 
