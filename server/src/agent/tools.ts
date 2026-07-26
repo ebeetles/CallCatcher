@@ -40,7 +40,7 @@ export const TOOL_DEFS: Record<string, ToolDef> = {
   check_availability: {
     name: "check_availability",
     description:
-      "Check the business's live calendar for a specific time. Use before booking to confirm the slot is open. Resolve the caller's spoken time (e.g. 'next Tuesday at 2pm') to a concrete local start using the current-time context.",
+      "Check the business's live calendar for a specific time. Use before booking to confirm the slot is open. Resolve the caller's spoken time (e.g. 'next Tuesday at 2pm') to a concrete local start by reading the date from the 'Dates for the coming days' list in the current-time context — do not compute weekday dates yourself.",
     inputSchema: {
       type: "object",
       properties: {

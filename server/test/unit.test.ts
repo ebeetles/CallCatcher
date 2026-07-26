@@ -120,6 +120,22 @@ describe("hours & prompt factory", () => {
     const ctx = nowContext(fakeBusiness(), new Date("2026-07-19T18:00:00Z"));
     expect(ctx).toContain("CLOSED");
   });
+
+  it("nowContext dates weekdays in the business timezone, not UTC", () => {
+    // 03:00 UTC Sun Jul 26 is still 8pm Sat Jul 25 in Los Angeles. The dated
+    // weekday list must follow the business's local day so "next Monday"
+    // resolves to Jul 27 (Pacific), not Jul 28 (a UTC-shifted week).
+    const instant = new Date("2026-07-26T03:00:00Z");
+    const la = nowContext({ ...fakeBusiness(), timezone: "America/Los_Angeles" }, instant);
+    expect(la).toContain("Today is Saturday 2026-07-25");
+    expect(la).toContain("Monday 2026-07-27");
+    expect(la).not.toContain("Monday 2026-07-28");
+
+    // Same instant, a UTC business, is already Sunday Jul 26 → Monday is Jul 27 too,
+    // but "today" differs — proving the anchor is the business's own local date.
+    const utc = nowContext({ ...fakeBusiness(), timezone: "UTC" }, instant);
+    expect(utc).toContain("Today is Sunday 2026-07-26");
+  });
 });
 
 describe("cost model", () => {

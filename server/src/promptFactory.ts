@@ -77,15 +77,47 @@ export function isOpenAt(hours: WeekHours, timezone: string, date: Date = new Da
   return day.ranges.some((r) => minutes >= toMinutes(r.start) && minutes < toMinutes(r.end));
 }
 
+/** Calendar date (YYYY-MM-DD) of `date` in the given timezone. */
+export function localDateISO(timezone: string, date: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+/**
+ * The next `count` calendar dates (today first) as "Weekday YYYY-MM-DD",
+ * anchored to the business's local "today". Pure calendar math on the local
+ * Y-M-D (noon UTC anchor) so it can't drift across DST or the UTC day line.
+ */
+function upcomingDates(timezone: string, date: Date, count: number): string[] {
+  const [y, m, d] = localDateISO(timezone, date).split("-").map(Number);
+  const base = Date.UTC(y, m - 1, d, 12);
+  const out: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const day = new Date(base + i * 86_400_000);
+    const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "long" }).format(day);
+    out.push(`${weekday} ${day.toISOString().slice(0, 10)}`);
+  }
+  return out;
+}
+
 /**
  * Per-call dynamic context. Injected in place of the {{NOW}} placeholder when a
- * call starts so the model never has to do timezone math.
+ * call starts so the model never has to do timezone or calendar math — today's
+ * date and the dates of the coming week are spelled out in the business's own
+ * timezone, so "next Monday" resolves to the right date, not a UTC-shifted one.
  */
 export function nowContext(business: Pick<BusinessProfile, "hours" | "timezone">, date: Date = new Date()): string {
   const { dayKey, pretty } = localNow(business.timezone, date);
   const open = isOpenAt(business.hours, business.timezone, date);
   const todays = formatDayHours(business.hours[dayKey]);
-  return `Right now it is ${pretty} (${business.timezone}). The business is currently ${open ? "OPEN" : "CLOSED"}. Today's hours: ${todays}.`;
+  const [today, ...upcoming] = upcomingDates(business.timezone, date, 8);
+  return (
+    `Right now it is ${pretty} (${business.timezone}). Today is ${today}. ` +
+    `The business is currently ${open ? "OPEN" : "CLOSED"}. Today's hours: ${todays}.\n` +
+    `Dates for the coming days (all times are ${business.timezone}): ${upcoming.join(", ")}. ` +
+    `When a caller names a day like "Monday" or "next Tuesday", use the matching date from this list — do not calculate it yourself.`
+  );
 }
 
 const PERSONALITY_LINES: Record<ReceptionistConfig["personality"], string> = {
@@ -248,7 +280,7 @@ export const ALL_TOOLS = ["take_message", "request_appointment", "transfer_call"
  */
 export const LIVE_SCHEDULING_INSTRUCTIONS = `# Live scheduling (calendar connected)
 This business has a live calendar. You CAN see real availability and book appointments directly — do not tell callers "the team will confirm the time." Instead:
-- Resolve the caller's spoken time to a concrete local start (use the current date/time context above). Ask for a day and time if they're vague.
+- Resolve the caller's spoken time to a concrete local start. Read the date straight from the "Dates for the coming days" list in the current-time context above — never compute a weekday's date yourself. Times are in the business's timezone. Ask for a day and time if they're vague.
 - Call check_availability for that start before promising anything.
 - If it's open, collect name, phone, and the service, then call book_appointment with the SAME start. The time is booked immediately — confirm it back to the caller in one sentence.
 - If it's busy, offer the nearest alternative and check again.
