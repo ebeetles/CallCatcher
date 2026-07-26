@@ -192,6 +192,22 @@ export interface AppointmentRequest {
   createdAt: string;
 }
 
+/** A business's connection to an external calendar (Google, for now). */
+export interface CalendarIntegration {
+  businessId: string;
+  provider: "google";
+  /** The connected Google account's email, for display in the dashboard. */
+  accountEmail?: string;
+  /** Which calendar events land on. "primary" = the owner's main calendar. */
+  calendarId: string;
+  /** AES-256-GCM ciphertext of the OAuth refresh token (SECRETS_KEY). */
+  refreshTokenEnc: string;
+  scopes: string;
+  status: "connected" | "revoked";
+  createdAt: string;
+  updatedAt: string;
+}
+
 export const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 
 export function defaultHours(): WeekHours {
