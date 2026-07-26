@@ -29,6 +29,8 @@ const PUBLIC_API_PATHS = new Set([
   "/api/public/config",
   "/api/public/demo-chat",
   "/api/public/demo-voice-token",
+  // Google redirects the client's browser here; auth is the signed `state` param.
+  "/api/integrations/google/callback",
 ]);
 
 export interface BuildAppOptions {

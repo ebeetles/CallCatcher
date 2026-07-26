@@ -1,7 +1,17 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { appointments, businesses, calls, messages, phoneNumbers, receptionists, turns } from "../db.ts";
+import { appointments, businesses, calendarIntegrations, calls, messages, phoneNumbers, receptionists, turns } from "../db.ts";
 import type { BusinessInput, TenantScope } from "../db.ts";
+import { signState, verifyState } from "../security.ts";
+import {
+  authUrl as googleAuthUrl,
+  clearAccessCache as clearGoogleAccessCache,
+  exchangeCode as exchangeGoogleCode,
+  isMock as gcalMock,
+  revoke as revokeGoogle,
+  saveConnection,
+} from "../integrations/googleCalendar.ts";
+import { googleRedirectUri } from "../config.ts";
 import { defaultHours } from "../types.ts";
 import {
   DEMO_GREETING,
@@ -14,8 +24,8 @@ import { ALL_TOOLS, buildGreeting, buildSystemPrompt } from "../promptFactory.ts
 import { authMode, config, defaultProviders, providerStatus } from "../config.ts";
 import { getLlm, listVoices } from "../providers/registry.ts";
 import { runAgentTurn } from "../agent/agentLoop.ts";
-import { executeTool, toolDefsFor } from "../agent/tools.ts";
-import { resolveSystemPrompt } from "../promptFactory.ts";
+import { calendarLive, executeTool, toolDefsFor } from "../agent/tools.ts";
+import { LIVE_SCHEDULING_INSTRUCTIONS, resolveSystemPrompt } from "../promptFactory.ts";
 import { estimateMonthly, PRICING } from "../costs.ts";
 import * as twilio from "../telephony/twilio.ts";
 import { extractFromWebsite, factoryAiAvailable, refinePrompt } from "../ai/factory.ts";
@@ -153,6 +163,22 @@ function businessSummary(id: string) {
   const rcp = receptionists.activeForBusiness(id);
   const stats = calls.statsForBusiness(id);
   return { ...b, number, receptionist: rcp, stats };
+}
+
+/** Minimal branded page shown to the CLIENT after they authorize (or fail). */
+function calendarResultPage(reply: any, ok: boolean, detail: string): any {
+  const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
+  const title = ok ? "Calendar connected" : "Connection failed";
+  const body = ok
+    ? `<h1>✓ Calendar connected</h1><p>Your Google Calendar is now linked to <strong>${esc(detail)}</strong>. New appointments booked by the receptionist will appear on your calendar automatically.</p><p class="muted">You can close this tab.</p>`
+    : `<h1>Couldn't connect</h1><p>${esc(detail)}</p><p class="muted">You can close this tab and ask for a new link.</p>`;
+  return reply.send(
+    `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
+<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0b1020;color:#e8ecf6;display:flex;min-height:100vh;margin:0;align-items:center;justify-content:center;padding:24px}
+.card{max-width:440px;background:#151b2e;border:1px solid #263049;border-radius:16px;padding:32px;box-shadow:0 12px 40px rgba(0,0,0,.35)}
+h1{font-size:22px;margin:0 0 12px}p{line-height:1.5;margin:0 0 10px}.muted{color:#8b97b5;font-size:14px}</style></head>
+<body><div class="card">${body}</div></body></html>`
+  );
 }
 
 export function registerApiRoutes(app: FastifyInstance) {
@@ -613,6 +639,76 @@ export function registerApiRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // ---------- Google Calendar integration ----------
+  // Operator-facing: you set this up for a client. Because reading a client's
+  // availability and writing to their calendar needs THEIR Google consent, the
+  // primary flow is a signed, shareable link you send them (they click once).
+  // "Connect now" opens the same link if you're setting it up together.
+
+  /** Safe public view of a business's calendar connection (never exposes tokens). */
+  function calendarStatus(businessId: string) {
+    const rec = calendarIntegrations.get(businessId);
+    return {
+      connected: !!rec && rec.status === "connected",
+      provider: "google" as const,
+      accountEmail: rec?.accountEmail,
+      calendarId: rec?.calendarId ?? "primary",
+      /** true = no real Google app configured; bookings are simulated. */
+      mock: gcalMock(),
+    };
+  }
+
+  app.get("/api/businesses/:id/integrations/google", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!scopedBusiness(req, id)) return reply.code(404).send({ error: "not found" });
+    return calendarStatus(id);
+  });
+
+  // Returns a consent link to hand to the client (real mode), or connects
+  // instantly (mock/zero-config, so the demo shows live booking with no keys).
+  app.post("/api/businesses/:id/integrations/google/connect", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const biz = scopedBusiness(req, id);
+    if (!biz) return reply.code(404).send({ error: "not found" });
+    if (gcalMock()) {
+      saveConnection(biz.id, await exchangeGoogleCode("mock"));
+      return { ...calendarStatus(biz.id), connected: true };
+    }
+    const url = googleAuthUrl(signState(biz.id));
+    return { connected: false, url, redirectUri: googleRedirectUri() };
+  });
+
+  app.delete("/api/businesses/:id/integrations/google", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!scopedBusiness(req, id)) return reply.code(404).send({ error: "not found" });
+    const rec = calendarIntegrations.get(id);
+    if (rec) {
+      await revokeGoogle(rec.refreshTokenEnc);
+      calendarIntegrations.remove(id);
+      clearGoogleAccessCache(id);
+    }
+    return { ok: true };
+  });
+
+  // Public: Google redirects the CLIENT's browser here (no dashboard session).
+  // Authorization comes from the HMAC-signed `state` minted by connect above.
+  app.get("/api/integrations/google/callback", async (req, reply) => {
+    const q = (req.query ?? {}) as { code?: string; state?: string; error?: string };
+    reply.type("text/html");
+    if (q.error) return calendarResultPage(reply, false, `Google reported: ${q.error}`);
+    const businessId = verifyState(q.state);
+    const biz = businessId ? businesses.get(businessId) : undefined;
+    if (!businessId || !q.code || !biz) {
+      return calendarResultPage(reply, false, "This connection link is invalid or has expired. Ask for a fresh link.");
+    }
+    try {
+      saveConnection(businessId, await exchangeGoogleCode(q.code));
+      return calendarResultPage(reply, true, biz.name);
+    } catch (err) {
+      return calendarResultPage(reply, false, (err as Error)?.message ?? "Something went wrong connecting the calendar.");
+    }
+  });
+
   // ---------- text chat simulator (SSE) ----------
   app.post("/api/businesses/:id/chat", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -644,7 +740,9 @@ export function registerApiRoutes(app: FastifyInstance) {
         llm: getLlm(rcp.llm.provider),
         model: rcp.llm.model,
         maxTokens: rcp.llm.maxTokens,
-        system: resolveSystemPrompt(rcp.systemPrompt, biz),
+        system:
+          resolveSystemPrompt(rcp.systemPrompt, biz) +
+          (calendarLive(biz) ? "\n\n" + LIVE_SCHEDULING_INSTRUCTIONS : ""),
         history,
         tools: toolDefsFor(rcp.tools, biz),
         signal: ac.signal,

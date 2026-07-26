@@ -196,6 +196,41 @@ All tenants run on these platform keys (managed-key model):
 Any missing key silently falls back to the mock provider, so partial configuration is fine
 during bring-up.
 
+## Step 6b — Google Calendar (optional, per-business booking)
+
+Lets a receptionist check a client's **real** availability and book appointments **directly**
+onto their Google Calendar — no callback step. One shared OAuth app serves every tenant
+(managed model, like the AI keys); each business owner authorizes their own calendar once.
+
+**One-time platform setup:**
+
+1. [Google Cloud Console](https://console.cloud.google.com) → create/select a project.
+2. **APIs & Services → Library →** enable **Google Calendar API**.
+3. **OAuth consent screen →** External; add the scopes `calendar.events` and
+   `calendar.readonly`; add your test clients as users while the app is unverified (or submit
+   for verification to remove the 100-user cap and the "unverified app" warning).
+4. **Credentials → Create credentials → OAuth client ID → Web application.** Add the redirect
+   URI: `<PUBLIC_URL>/api/integrations/google/callback` (e.g.
+   `https://api.yourdomain.com/api/integrations/google/callback`).
+5. Put the client ID/secret in `.env` as `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. This
+   requires `SECRETS_KEY` (Step in the security group) — refresh tokens are encrypted at rest.
+
+**Connecting a client (what you do per business):** open the business → **Receptionist** tab →
+**Google Calendar** panel. Because reading a client's calendar needs *their* consent, you have
+two options:
+
+- **Copy client link** → send it to the client (valid 7 days). They click it, pick their
+  Google account, approve, and land on a "✓ Calendar connected" page. Your dashboard flips to
+  **Connected** — no password ever touches your side.
+- **Connect now** → opens the same consent screen immediately (use when you're screen-sharing
+  or setting it up together).
+
+Once connected, the receptionist's appointment capability upgrades automatically: instead of
+"the team will confirm," it checks the live calendar and books on the spot (events default to
+the owner's `primary` calendar, in the business's timezone). Disconnect any time from the same
+panel. **Without `GOOGLE_CLIENT_ID`/`SECRET` the panel still works in a simulated mode** (always
+"free", mock events) so you can demo the flow with zero keys.
+
 ## Step 7 — Run it
 
 ```bash
@@ -269,6 +304,8 @@ If the dashboard is hosted on a different origin than the API (e.g. Vercel + a V
 | `DEEPGRAM_API_KEY` | Real calls | Streaming STT + default TTS (Aura) |
 | `ELEVENLABS_API_KEY` | Premium voices | Plan-gated per `server/src/plans.ts` |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | Telephony | Master account; subaccounts are provisioned under it |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Calendar booking | Shared OAuth app; needs `SECRETS_KEY`. Absent → simulated mode |
+| `GOOGLE_REDIRECT_URI` | — | Override; defaults to `PUBLIC_URL` + `/api/integrations/google/callback` |
 | `CALL_MODEL_ANTHROPIC` / `CALL_MODEL_OPENAI` | — | Live-call model overrides |
 | `FACTORY_MODEL` | — | Prompt-factory model override |
 

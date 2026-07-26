@@ -5,8 +5,8 @@ import type { SttStream } from "../providers/types.ts";
 import { MediaTransport, type StartMeta } from "./transport.ts";
 import { SentenceChunker } from "./sentenceChunker.ts";
 import { runAgentTurn } from "../agent/agentLoop.ts";
-import { executeTool, toolDefsFor } from "../agent/tools.ts";
-import { resolveSystemPrompt } from "../promptFactory.ts";
+import { calendarLive, executeTool, toolDefsFor } from "../agent/tools.ts";
+import { LIVE_SCHEDULING_INSTRUCTIONS, resolveSystemPrompt } from "../promptFactory.ts";
 import { calls, turns } from "../db.ts";
 import { estimateCallCost } from "../costs.ts";
 
@@ -121,6 +121,9 @@ export class CallSession {
     const call = calls.create(business.id, meta.isWeb ? "web" : "phone", meta.callSid, from);
     this.callId = call.id;
     this.system = resolveSystemPrompt(receptionist.systemPrompt, business);
+    // The stored prompt assumes no live calendar. When one is connected, override
+    // that: the receptionist can now check availability and book in real time.
+    if (calendarLive(business)) this.system += "\n\n" + LIVE_SCHEDULING_INSTRUCTIONS;
 
     console.log(
       `[call ${this.callId}] started (${meta.isWeb ? "web" : "phone"}) business=${business.name} llm=${receptionist.llm.provider}/${receptionist.llm.model} tts=${receptionist.voice.provider}`
