@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { config } from "./config.ts";
 import type {
   AppointmentRequest,
+  CalendarIntegration,
   BusinessProfile,
   CallMetrics,
   CallRecord,
@@ -155,6 +156,18 @@ CREATE TABLE IF NOT EXISTS appointments (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_appointments_business ON appointments(business_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS calendar_integrations (
+  business_id TEXT PRIMARY KEY REFERENCES businesses(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL DEFAULT 'google',
+  account_email TEXT,
+  calendar_id TEXT NOT NULL DEFAULT 'primary',
+  refresh_token_enc TEXT NOT NULL,
+  scopes TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'connected',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `);
 
 // Idempotent column adds for schemas created before these columns existed.
@@ -740,5 +753,74 @@ export const appointments = {
     return !!db
       .prepare(`SELECT 1 FROM appointments a JOIN businesses b ON b.id=a.business_id WHERE a.id=? AND ${w.sql}`)
       .get(id, ...w.params);
+  },
+};
+
+// ---------- Calendar integrations ----------
+
+function rowToCalendarIntegration(r: any): CalendarIntegration {
+  return {
+    businessId: r.business_id,
+    provider: r.provider,
+    accountEmail: r.account_email ?? undefined,
+    calendarId: r.calendar_id,
+    refreshTokenEnc: r.refresh_token_enc,
+    scopes: r.scopes,
+    status: r.status,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+export const calendarIntegrations = {
+  /** Insert or replace a business's calendar connection. */
+  upsert(input: {
+    businessId: string;
+    provider?: "google";
+    accountEmail?: string;
+    calendarId?: string;
+    refreshTokenEnc: string;
+    scopes?: string;
+  }): CalendarIntegration {
+    const now = nowIso();
+    db.prepare(
+      `INSERT INTO calendar_integrations (business_id,provider,account_email,calendar_id,refresh_token_enc,scopes,status,created_at,updated_at)
+       VALUES (@business_id,@provider,@account_email,@calendar_id,@refresh_token_enc,@scopes,'connected',@now,@now)
+       ON CONFLICT(business_id) DO UPDATE SET
+         provider=@provider, account_email=@account_email, calendar_id=@calendar_id,
+         refresh_token_enc=@refresh_token_enc, scopes=@scopes, status='connected', updated_at=@now`
+    ).run({
+      business_id: input.businessId,
+      provider: input.provider ?? "google",
+      account_email: input.accountEmail ?? null,
+      calendar_id: input.calendarId ?? "primary",
+      refresh_token_enc: input.refreshTokenEnc,
+      scopes: input.scopes ?? "",
+      now,
+    });
+    return this.get(input.businessId)!;
+  },
+
+  get(businessId: string): CalendarIntegration | undefined {
+    const r = db.prepare("SELECT * FROM calendar_integrations WHERE business_id=?").get(businessId);
+    return r ? rowToCalendarIntegration(r) : undefined;
+  },
+
+  /** A connected (not revoked) integration, or undefined. */
+  connected(businessId: string): CalendarIntegration | undefined {
+    const rec = this.get(businessId);
+    return rec && rec.status === "connected" ? rec : undefined;
+  },
+
+  setCalendarId(businessId: string, calendarId: string): void {
+    db.prepare("UPDATE calendar_integrations SET calendar_id=?, updated_at=? WHERE business_id=?").run(
+      calendarId,
+      nowIso(),
+      businessId
+    );
+  },
+
+  remove(businessId: string): void {
+    db.prepare("DELETE FROM calendar_integrations WHERE business_id=?").run(businessId);
   },
 };

@@ -65,6 +65,20 @@ export const config = {
   /** 64-hex-char key for AES-256-GCM encryption of stored secrets (subaccount tokens). */
   secretsKey: process.env.SECRETS_KEY || "",
 
+  // ---------- Google Calendar integration ----------
+  /**
+   * One shared Google OAuth app for the whole platform (managed model, like the
+   * Anthropic/Deepgram keys). Each business owner authorizes their OWN calendar
+   * once via a per-business consent link; we store only their refresh token.
+   * Create at console.cloud.google.com → APIs & Services → Credentials → OAuth
+   * client (Web application), enable the Google Calendar API, and register the
+   * redirect URI below.
+   */
+  googleClientId: process.env.GOOGLE_CLIENT_ID || "",
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+  /** Where Google sends the browser back. Defaults to PUBLIC_URL + the callback path. */
+  googleRedirectUri: process.env.GOOGLE_REDIRECT_URI || "",
+
   // ---------- billing (Stripe) ----------
   stripeSecretKey: process.env.STRIPE_SECRET_KEY || "",
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || "",
@@ -109,8 +123,22 @@ export interface ProviderStatus {
   llm: { anthropic: boolean; openai: boolean; mock: true };
   tts: { deepgram: boolean; elevenlabs: boolean; mock: true };
   telephony: { twilio: boolean };
+  /** Google Calendar OAuth app configured (platform-level). */
+  googleCalendar: boolean;
   factoryAi: boolean;
   mockMode: boolean;
+}
+
+/** True when the platform's Google OAuth app is configured (real, non-mock). */
+export function googleConfigured(): boolean {
+  return !!(config.googleClientId && config.googleClientSecret) && !config.mockProviders;
+}
+
+/** The redirect URI Google calls back after consent. */
+export function googleRedirectUri(): string {
+  if (config.googleRedirectUri) return config.googleRedirectUri;
+  const base = (config.publicUrl || config.appUrl || "").replace(/\/$/, "");
+  return `${base}/api/integrations/google/callback`;
 }
 
 export function providerStatus(): ProviderStatus {
@@ -127,6 +155,7 @@ export function providerStatus(): ProviderStatus {
       mock: true,
     },
     telephony: { twilio: !!(config.twilioAccountSid && config.twilioAuthToken) },
+    googleCalendar: googleConfigured(),
     factoryAi: !!config.anthropicKey && !config.mockProviders,
     mockMode: config.mockProviders,
   };

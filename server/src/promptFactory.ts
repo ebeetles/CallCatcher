@@ -240,3 +240,16 @@ export function resolveSystemPrompt(systemPrompt: string, business: Pick<Busines
 }
 
 export const ALL_TOOLS = ["take_message", "request_appointment", "transfer_call", "end_call"];
+
+/**
+ * Appended at call time (not stored) when the business has a live Google
+ * Calendar connected. Overrides the stored prompt's "you can't see the
+ * calendar" guidance and steers the model to the real booking tools.
+ */
+export const LIVE_SCHEDULING_INSTRUCTIONS = `# Live scheduling (calendar connected)
+This business has a live calendar. You CAN see real availability and book appointments directly — do not tell callers "the team will confirm the time." Instead:
+- Resolve the caller's spoken time to a concrete local start (use the current date/time context above). Ask for a day and time if they're vague.
+- Call check_availability for that start before promising anything.
+- If it's open, collect name, phone, and the service, then call book_appointment with the SAME start. The time is booked immediately — confirm it back to the caller in one sentence.
+- If it's busy, offer the nearest alternative and check again.
+- Only if the calendar tools error out should you fall back to taking their details for the team to confirm.`;

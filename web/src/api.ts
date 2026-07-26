@@ -170,6 +170,26 @@ export const listAppointments = (bizId: string) => api<AppointmentRequest[]>(`/a
 export const setAppointmentStatus = (apptId: string, status: "new" | "confirmed" | "declined") =>
   api<{ ok: true }>(`/api/appointments/${apptId}`, { method: "PATCH", body: JSON.stringify({ status }) });
 
+// ---------- Google Calendar integration ----------
+export interface CalendarStatus {
+  connected: boolean;
+  provider: "google";
+  accountEmail?: string;
+  calendarId: string;
+  /** true = no real Google app configured; bookings are simulated. */
+  mock: boolean;
+}
+export const getCalendarStatus = (bizId: string) =>
+  api<CalendarStatus>(`/api/businesses/${bizId}/integrations/google`);
+/** Real mode → returns a consent link to send the client. Mock mode → connects instantly. */
+export const connectCalendar = (bizId: string) =>
+  api<CalendarStatus & { url?: string; redirectUri?: string }>(
+    `/api/businesses/${bizId}/integrations/google/connect`,
+    { method: "POST", body: "{}" }
+  );
+export const disconnectCalendar = (bizId: string) =>
+  api<{ ok: true }>(`/api/businesses/${bizId}/integrations/google`, { method: "DELETE" });
+
 // ---------- chat simulator (POST + SSE body) ----------
 /** Consume a `text/event-stream` of `data: {json}` frames, dispatching each parsed event. */
 async function consumeChatStream(res: Response, onEvent: (e: ChatEvent) => void): Promise<void> {

@@ -4,6 +4,7 @@ import { fmtDateTime } from "../../format";
 import type { BusinessSummary, Personality, PromptPreview, ReceptionistDraft, StatusResponse } from "../../types";
 import { ALL_TOOLS, TOOL_LABELS } from "../../types";
 import { Chip, ErrorNote, Field, Lamp, Panel, Spinner } from "../../ui";
+import CalendarPanel from "./CalendarPanel";
 
 const PERSONALITIES: Array<{ id: Personality; blurb: string }> = [
   { id: "friendly", blurb: "Upbeat and casual — good for salons, gyms, family practices." },
@@ -277,6 +278,8 @@ export default function ReceptionistTab({
               </label>
             ) : null}
           </Panel>
+
+          <CalendarPanel biz={biz} />
         </div>
 
         <div>
