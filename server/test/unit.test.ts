@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SentenceChunker } from "../src/voice/sentenceChunker.ts";
 import { linearToMulawSample, mulawToLinearSample, mulawTone, pcm16ToMulaw, mulawToPcm16 } from "../src/audio/mulaw.ts";
-import { buildSystemPrompt, formatWeekHours, isOpenAt, nowContext, resolveSystemPrompt, to12h } from "../src/promptFactory.ts";
+import { buildSystemPrompt, formatWeekHours, isOpenAt, LIVE_SCHEDULING_INSTRUCTIONS, nowContext, resolveSystemPrompt, to12h } from "../src/promptFactory.ts";
 import { estimateCallCost, estimateMonthly } from "../src/costs.ts";
 import { defaultHours, type BusinessProfile } from "../src/types.ts";
 
@@ -114,6 +114,16 @@ describe("hours & prompt factory", () => {
     const resolved = resolveSystemPrompt(prompt, biz, new Date("2026-07-15T17:30:00Z"));
     expect(resolved).not.toContain("{{NOW}}");
     expect(resolved).toContain("currently OPEN");
+  });
+
+  it("appointment guidance is calendar-aware, not a hard 'no calendar' claim", () => {
+    const prompt = buildSystemPrompt(fakeBusiness(), { personality: "friendly", tools: ["request_appointment"] });
+    expect(prompt).not.toContain("cannot see the live calendar");
+    expect(prompt).toContain("live-calendar scheduling section");
+    // The live section names the real tools and says it overrides the fallback.
+    expect(LIVE_SCHEDULING_INSTRUCTIONS).toContain("check_availability");
+    expect(LIVE_SCHEDULING_INSTRUCTIONS).toContain("book_appointment");
+    expect(LIVE_SCHEDULING_INSTRUCTIONS).toMatch(/OVERRIDES|supersede/i);
   });
 
   it("nowContext reports closed days", () => {

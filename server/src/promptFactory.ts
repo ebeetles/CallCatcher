@@ -214,7 +214,7 @@ ${business.notes.trim()}`);
   }
   if (opts.tools.includes("request_appointment")) {
     toolLines.push(
-      `- request_appointment: When the caller wants to book, reschedule, or cancel an appointment — collect name, phone number, the service they want, and their preferred day/time. You cannot see the live calendar, so set expectations: someone from the business will confirm the exact time. Then call request_appointment.`
+      `- Appointments: When the caller wants to book, reschedule, or cancel, collect their name, phone number, the service they want, and their preferred day/time. If a live-calendar scheduling section appears below, follow it — you can check real availability and book on the spot. Otherwise, call request_appointment to submit the request and let the caller know the team will confirm the exact time shortly.`
     );
   }
   if (opts.tools.includes("transfer_call") && business.forwardNumber) {
@@ -275,13 +275,19 @@ export const ALL_TOOLS = ["take_message", "request_appointment", "transfer_call"
 
 /**
  * Appended at call time (not stored) when the business has a live Google
- * Calendar connected. Overrides the stored prompt's "you can't see the
- * calendar" guidance and steers the model to the real booking tools.
+ * Calendar connected. Supersedes the compiled prompt's generic appointment
+ * guidance and steers the model to the real booking tools (check_availability
+ * + book_appointment) in place of request_appointment.
  */
-export const LIVE_SCHEDULING_INSTRUCTIONS = `# Live scheduling (calendar connected)
-This business has a live calendar. You CAN see real availability and book appointments directly — do not tell callers "the team will confirm the time." Instead:
-- Resolve the caller's spoken time to a concrete local start. Read the date straight from the "Dates for the coming days" list in the current-time context above — never compute a weekday's date yourself. Times are in the business's timezone. Ask for a day and time if they're vague.
-- Call check_availability for that start before promising anything.
-- If it's open, collect name, phone, and the service, then call book_appointment with the SAME start. The time is booked immediately — confirm it back to the caller in one sentence.
-- If it's busy, offer the nearest alternative and check again.
-- Only if the calendar tools error out should you fall back to taking their details for the team to confirm.`;
+export const LIVE_SCHEDULING_INSTRUCTIONS = `# Live scheduling (Google Calendar connected)
+This business has a live Google Calendar connected. This section OVERRIDES the general appointment guidance above: use the check_availability and book_appointment tools instead of request_appointment, and never tell a caller "the team will confirm the time" — you confirm it yourself, on the spot.
+
+When a caller wants to book, reschedule, or ask about availability:
+1. Get a specific day and time. If they're vague ("sometime next week"), ask for one; if they give a day but no time, offer a couple of times within business hours.
+2. Turn it into a concrete local start time. Read the date straight from the "Dates for the coming days" list in the current-time context above — never compute a weekday's date yourself. All times are in the business's timezone.
+3. Call check_availability with that start BEFORE promising anything.
+   - Open → collect the caller's name, phone number, and the service, then call book_appointment with the SAME start. It's booked immediately; confirm the exact day and time back to the caller in one short sentence.
+   - Busy → tell them that time is taken, offer the nearest alternative, and check_availability again.
+4. To reschedule or cancel, take the details and (if you can't complete it with the tools) fall back to request_appointment or take_message so the team can action it.
+
+Only if a calendar tool returns an error should you fall back: apologize briefly, take their name, number, service, and preferred time, and tell them the team will confirm — do not imply the slot is locked in.`;
