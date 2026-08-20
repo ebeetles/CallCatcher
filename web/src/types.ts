@@ -82,6 +82,7 @@ export interface ReceptionistConfig {
   systemPrompt: string;
   greeting: string;
   personality: Personality;
+  bilingual?: boolean;
   voice: VoiceConfig;
   llm: LlmConfig;
   sttProvider: string;
@@ -290,6 +291,7 @@ export interface OwnedNumber {
 
 export interface ReceptionistDraft {
   personality: Personality;
+  bilingual?: boolean;
   systemPrompt?: string;
   greeting?: string;
   extraInstructions?: string;

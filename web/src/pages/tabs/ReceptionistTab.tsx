@@ -15,6 +15,7 @@ const PERSONALITIES: Array<{ id: Personality; blurb: string }> = [
 
 interface Draft {
   personality: Personality;
+  bilingual: boolean;
   voiceProvider: string;
   voiceId: string;
   llmProvider: string;
@@ -58,6 +59,7 @@ export default function ReceptionistTab({
   const active = biz.receptionist;
   const [draft, setDraft] = useState<Draft>(() => ({
     personality: active?.personality ?? "friendly",
+    bilingual: active?.bilingual ?? false,
     voiceProvider: active?.voice.provider ?? status?.defaults.tts ?? "mock",
     voiceId: active?.voice.voiceId ?? "",
     llmProvider: active?.llm.provider ?? status?.defaults.llm ?? "mock",
@@ -99,13 +101,14 @@ export default function ReceptionistTab({
   const [deployed, setDeployed] = useState<number | undefined>();
 
   // The compiled prompt depends on these — changing them invalidates a stale preview.
-  const factoryInputs = `${draft.personality}|${draft.tools.join(",")}|${draft.extraInstructions}|${draft.useAi}`;
+  const factoryInputs = `${draft.personality}|${draft.bilingual}|${draft.tools.join(",")}|${draft.extraInstructions}|${draft.useAi}`;
   useEffect(() => {
     setPreview(undefined);
   }, [factoryInputs]);
 
   const toDraftPayload = (): ReceptionistDraft => ({
     personality: draft.personality,
+    bilingual: draft.bilingual,
     voice: { provider: draft.voiceProvider, voiceId: draft.voiceId },
     llm: { provider: draft.llmProvider, model: draft.llmModel.trim(), maxTokens: draft.maxTokens },
     sttProvider: draft.sttProvider,
@@ -170,6 +173,34 @@ export default function ReceptionistTab({
                 </label>
               ))}
             </div>
+            <label className="checkrow" style={{ marginTop: 12 }}>
+              <input
+                type="checkbox"
+                checked={draft.bilingual}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setDraft((d) => {
+                    // Chinese speech needs a Chinese-capable voice — ElevenLabs.
+                    const switchVoice = on && d.voiceProvider === "deepgram" && ttsProviders.includes("elevenlabs");
+                    return {
+                      ...d,
+                      bilingual: on,
+                      voiceProvider: switchVoice ? "elevenlabs" : d.voiceProvider,
+                      voiceId: switchVoice ? "" : d.voiceId,
+                    };
+                  });
+                }}
+              />
+              <span>
+                <span className="t">Bilingual — English / Chinese</span>
+                <span className="d"> — greets in English, then detects whether the caller speaks English or Mandarin and stays in that language for the call.</span>
+              </span>
+            </label>
+            {draft.bilingual && draft.voiceProvider === "deepgram" ? (
+              <div className="note warn" style={{ marginTop: 8, marginBottom: 0 }}>
+                The Deepgram voices only speak English. Pick an ElevenLabs voice under “Voice &amp; brain” so the receptionist can actually speak Mandarin.
+              </div>
+            ) : null}
           </Panel>
 
           <Panel title="Voice & brain">

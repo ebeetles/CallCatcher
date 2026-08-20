@@ -103,6 +103,13 @@ export interface ReceptionistConfig {
   systemPrompt: string;
   greeting: string;
   personality: "friendly" | "professional" | "warm" | "efficient";
+  /**
+   * When true, the receptionist greets in English, then detects whether the
+   * caller speaks English or Chinese from their first utterance and stays in
+   * that language for the rest of the call. Requires a Chinese-capable TTS
+   * voice (ElevenLabs) to actually speak Mandarin.
+   */
+  bilingual?: boolean;
   voice: VoiceConfig;
   llm: LlmConfig;
   sttProvider: string;

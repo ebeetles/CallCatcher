@@ -1,4 +1,4 @@
-import type { SttCallbacks, SttProvider, SttStream } from "../types.ts";
+import type { SttCallbacks, SttOptions, SttProvider, SttStream } from "../types.ts";
 
 /**
  * Keyless STT stand-in. It cannot understand audio; instead, after it hears
@@ -17,7 +17,7 @@ const SCRIPT = [
 export class MockStt implements SttProvider {
   readonly id = "mock";
 
-  async start(cb: SttCallbacks): Promise<SttStream> {
+  async start(cb: SttCallbacks, _opts: SttOptions = {}): Promise<SttStream> {
     let bytesSinceQuiet = 0;
     let scriptIndex = 0;
     let speaking = false;
