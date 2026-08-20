@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { SentenceChunker } from "../src/voice/sentenceChunker.ts";
+import { pickBilingualLanguage } from "../src/voice/session.ts";
 import { linearToMulawSample, mulawToLinearSample, mulawTone, pcm16ToMulaw, mulawToPcm16 } from "../src/audio/mulaw.ts";
-import { buildSystemPrompt, formatWeekHours, isOpenAt, LIVE_SCHEDULING_INSTRUCTIONS, nowContext, resolveSystemPrompt, to12h } from "../src/promptFactory.ts";
+import { buildSystemPrompt, CHINESE_LOCK_NOTE, formatWeekHours, isOpenAt, LIVE_SCHEDULING_INSTRUCTIONS, nowContext, resolveSystemPrompt, to12h } from "../src/promptFactory.ts";
 import { estimateCallCost, estimateMonthly } from "../src/costs.ts";
 import { defaultHours, type BusinessProfile } from "../src/types.ts";
 
@@ -126,6 +127,19 @@ describe("hours & prompt factory", () => {
     expect(LIVE_SCHEDULING_INSTRUCTIONS).toMatch(/OVERRIDES|supersede/i);
   });
 
+  it("adds a bilingual language section only when enabled", () => {
+    const biz = fakeBusiness();
+    const plain = buildSystemPrompt(biz, { personality: "friendly", tools: ["end_call"] });
+    expect(plain).not.toContain("# Language");
+
+    const bi = buildSystemPrompt(biz, { personality: "friendly", tools: ["end_call"], bilingual: true });
+    expect(bi).toContain("# Language");
+    expect(bi).toMatch(/Mandarin/i);
+    expect(bi).toMatch(/greeting is in English/i);
+    // The lock note used at detection time is a real, separate instruction.
+    expect(CHINESE_LOCK_NOTE).toMatch(/Mandarin/i);
+  });
+
   it("nowContext reports closed days", () => {
     const ctx = nowContext(fakeBusiness(), new Date("2026-07-19T18:00:00Z"));
     expect(ctx).toContain("CLOSED");
@@ -145,6 +159,32 @@ describe("hours & prompt factory", () => {
     // but "today" differs — proving the anchor is the business's own local date.
     const utc = nowContext({ ...fakeBusiness(), timezone: "UTC" }, instant);
     expect(utc).toContain("Today is Sunday 2026-07-26");
+  });
+});
+
+describe("bilingual language detection", () => {
+  it("picks Chinese when the zh stream returns confident Han characters", () => {
+    const d = pickBilingualLanguage({ text: "knee how ma", confidence: 0.4 }, { text: "你好，请问几点开门？", confidence: 0.9 });
+    expect(d).toEqual({ lang: "zh", text: "你好，请问几点开门？" });
+  });
+
+  it("picks English for a Latin transcript even if the zh stream also fires", () => {
+    const d = pickBilingualLanguage({ text: "Hi, what are your hours?", confidence: 0.95 }, { text: "hai what are", confidence: 0.3 });
+    expect(d?.lang).toBe("en");
+  });
+
+  it("ignores low-confidence CJK (a hallucinated character on English audio)", () => {
+    const d = pickBilingualLanguage({ text: "book me a table", confidence: 0.9 }, { text: "个", confidence: 0.1 });
+    expect(d?.lang).toBe("en");
+  });
+
+  it("still commits to Chinese when only the zh stream produced anything", () => {
+    const d = pickBilingualLanguage(undefined, { text: "我想预约", confidence: 0.2 });
+    expect(d?.lang).toBe("zh");
+  });
+
+  it("returns undefined when neither stream produced a final", () => {
+    expect(pickBilingualLanguage(undefined, undefined)).toBeUndefined();
   });
 });
 

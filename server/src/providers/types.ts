@@ -5,8 +5,10 @@
 export interface SttCallbacks {
   /** Interim transcript (may change). Used for UI + early barge-in confidence. */
   onPartial(text: string): void;
-  /** Finalized utterance — triggers an agent turn. */
-  onFinal(text: string): void;
+  /** Finalized utterance — triggers an agent turn. `confidence` (0-1) is the
+   *  provider's confidence in the transcript, used for bilingual language
+   *  detection when two streams race on the same audio. */
+  onFinal(text: string, confidence?: number): void;
   /** Voice activity detected — triggers barge-in while the agent is speaking. */
   onSpeechStarted(): void;
   onError(err: Error): void;
@@ -18,9 +20,15 @@ export interface SttStream {
   close(): Promise<void>;
 }
 
+export interface SttOptions {
+  /** BCP-47-ish language code for the recognizer, e.g. "en" or "zh". Omit for
+   *  the provider's default (English). */
+  language?: string;
+}
+
 export interface SttProvider {
   readonly id: string;
-  start(callbacks: SttCallbacks): Promise<SttStream>;
+  start(callbacks: SttCallbacks, opts?: SttOptions): Promise<SttStream>;
 }
 
 // ---------- LLM ----------

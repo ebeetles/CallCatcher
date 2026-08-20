@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import type { SttCallbacks, SttProvider, SttStream } from "../types.ts";
+import type { SttCallbacks, SttOptions, SttProvider, SttStream } from "../types.ts";
 import { config } from "../../config.ts";
 
 /**
@@ -9,7 +9,7 @@ import { config } from "../../config.ts";
 export class DeepgramStt implements SttProvider {
   readonly id = "deepgram";
 
-  async start(cb: SttCallbacks): Promise<SttStream> {
+  async start(cb: SttCallbacks, opts: SttOptions = {}): Promise<SttStream> {
     const params = new URLSearchParams({
       model: "nova-3",
       encoding: "mulaw",
@@ -23,19 +23,26 @@ export class DeepgramStt implements SttProvider {
       vad_events: "true",
       filler_words: "false",
     });
+    // Omit for the default (English). Set explicitly for e.g. Chinese ("zh"),
+    // which nova-3 supports only as a single-language stream.
+    if (opts.language) params.set("language", opts.language);
     const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, {
       headers: { Authorization: `Token ${config.deepgramKey}` },
     });
 
     /** Finalized-but-not-yet-endpointed pieces of the current utterance. */
     let pending: string[] = [];
+    /** Per-piece confidences, averaged into the final for language detection. */
+    let pendingConf: number[] = [];
     let closed = false;
     let keepAlive: NodeJS.Timeout | undefined;
 
     const flushFinal = () => {
       const text = pending.join(" ").trim();
+      const conf = pendingConf.length ? pendingConf.reduce((a, b) => a + b, 0) / pendingConf.length : undefined;
       pending = [];
-      if (text) cb.onFinal(text);
+      pendingConf = [];
+      if (text) cb.onFinal(text, conf);
     };
 
     ws.on("message", (data) => {
@@ -49,7 +56,10 @@ export class DeepgramStt implements SttProvider {
         const alt = msg.channel?.alternatives?.[0];
         const transcript: string = alt?.transcript ?? "";
         if (msg.is_final) {
-          if (transcript.trim()) pending.push(transcript.trim());
+          if (transcript.trim()) {
+            pending.push(transcript.trim());
+            if (typeof alt?.confidence === "number") pendingConf.push(alt.confidence);
+          }
           if (msg.speech_final) flushFinal();
         } else if (transcript.trim()) {
           cb.onPartial([...pending, transcript.trim()].join(" "));

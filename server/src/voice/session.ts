@@ -1,12 +1,12 @@
 import type { BusinessProfile, CallMetrics, ReceptionistConfig, TurnLatency } from "../types.ts";
 import type { HistoryItem } from "../providers/types.ts";
 import { getLlm, getStt, getTts } from "../providers/registry.ts";
-import type { SttStream } from "../providers/types.ts";
+import type { SttCallbacks, SttStream } from "../providers/types.ts";
 import { MediaTransport, type StartMeta } from "./transport.ts";
 import { SentenceChunker } from "./sentenceChunker.ts";
 import { runAgentTurn } from "../agent/agentLoop.ts";
 import { calendarLive, executeTool, toolDefsFor } from "../agent/tools.ts";
-import { LIVE_SCHEDULING_INSTRUCTIONS, resolveSystemPrompt } from "../promptFactory.ts";
+import { CHINESE_LOCK_NOTE, LIVE_SCHEDULING_INSTRUCTIONS, resolveSystemPrompt } from "../promptFactory.ts";
 import { calls, turns } from "../db.ts";
 import { estimateCallCost } from "../costs.ts";
 
@@ -31,6 +31,40 @@ const DEFAULT_TIMERS = {
   playbackGraceMs: 4000,
 };
 
+/** Bilingual detection: Deepgram language code for the Chinese race stream. */
+const DETECT_CHINESE_LANG = "zh";
+/** How long to wait for the second race stream to finalize before deciding. */
+const DETECT_WINDOW_MS = 700;
+/** Minimum Chinese-stream confidence to trust a CJK transcript as real speech. */
+const DETECT_CONF_FLOOR = 0.4;
+
+const hasCJK = (text: string): boolean => /[一-鿿㐀-䶿]/.test(text);
+
+export interface DetectFinal {
+  text: string;
+  confidence: number;
+}
+
+/**
+ * Decide the caller's language from the first final each race stream produced.
+ * Chinese characters in the Chinese-model transcript are the strong signal —
+ * the English recognizer never emits them — gated by a confidence floor so a
+ * stray hallucinated character on English audio doesn't flip the call. Falls
+ * back to English. Pure and exported for unit testing.
+ */
+export function pickBilingualLanguage(
+  en: DetectFinal | undefined,
+  zh: DetectFinal | undefined,
+  confFloor = DETECT_CONF_FLOOR
+): { lang: "en" | "zh"; text: string } | undefined {
+  const zhHasCJK = !!zh && hasCJK(zh.text);
+  const chineseWins = !!zh && zhHasCJK && (zh.confidence >= confFloor || !en);
+  if (chineseWins) return { lang: "zh", text: zh!.text };
+  if (en) return { lang: "en", text: en.text };
+  if (zh) return { lang: zhHasCJK ? "zh" : "en", text: zh.text };
+  return undefined;
+}
+
 /**
  * One live call. Wires transport <-> STT <-> agent loop <-> TTS with
  * barge-in, silence handling, tool side-effects, and metrics.
@@ -40,6 +74,13 @@ export class CallSession {
   private callId = "";
   private callSid?: string;
   private stt?: SttStream;
+  /** Bilingual only: the caller's detected language, once resolved. */
+  private callLanguage?: "en" | "zh";
+  /** Bilingual only: the racing en/zh streams active until language is decided. */
+  private detectStreams: Array<{ lang: "en" | "zh"; stream: SttStream }> = [];
+  private detecting = false;
+  private detectFirstFinals: Partial<Record<"en" | "zh", { text: string; confidence: number }>> = {};
+  private detectTimer?: NodeJS.Timeout;
   private system = "";
   private state: "starting" | "listening" | "responding" | "ended" = "starting";
   private currentAbort = new AbortController();
@@ -131,28 +172,17 @@ export class CallSession {
     this.transport.sendUiEvent({ event: "status", status: "connected", callId: this.callId });
 
     // Start STT (skip for pure typed sessions? cheap to start; web sends audio only in voice mode).
-    try {
-      const stt = getStt(receptionist.sttProvider);
-      this.stt = await stt.start({
-        onPartial: (text) => {
-          if (this.assistantAudioActive && this.isLikelyEcho(text)) return;
-          this.maybeBargeIn("partial", text);
-          this.resetSilenceTimer();
-          this.transport.sendUiEvent({ event: "transcript", role: "user", content: text, partial: true });
-        },
-        onFinal: (text) => {
-          // A final that echoes our own speech isn't the caller talking — drop it.
-          if (this.assistantAudioActive && this.isLikelyEcho(text)) return;
-          this.interruptForNewInput();
-          this.enqueueTask(() => this.handleUserText(text, "spoken"));
-        },
-        onSpeechStarted: () => {
-          this.resetSilenceTimer();
-        },
-        onError: (err) => console.error(`[call ${this.callId}] STT error:`, err.message),
-      });
-    } catch (err: any) {
-      console.error(`[call ${this.callId}] STT failed to start:`, err?.message ?? err);
+    // Bilingual receptionists race an English and a Chinese stream over the
+    // caller's first utterance, then lock the call to whichever wins.
+    if (receptionist.bilingual) {
+      await this.startBilingualDetection(receptionist.sttProvider);
+    } else {
+      try {
+        const stt = getStt(receptionist.sttProvider);
+        this.stt = await stt.start(this.normalSttCallbacks());
+      } catch (err: any) {
+        console.error(`[call ${this.callId}] STT failed to start:`, err?.message ?? err);
+      }
     }
 
     this.maxDurationTimer = setTimeout(() => {
@@ -180,8 +210,128 @@ export class CallSession {
 
   private handleAudio(chunk: Buffer) {
     if (this.state === "ended") return;
-    this.metrics.sttSeconds += chunk.length / 8000;
-    this.stt?.sendAudio(chunk);
+    const seconds = chunk.length / 8000;
+    if (this.detecting) {
+      // Both race streams see the audio, so bill both.
+      this.metrics.sttSeconds += seconds * this.detectStreams.length;
+      for (const s of this.detectStreams) s.stream.sendAudio(chunk);
+    } else {
+      this.metrics.sttSeconds += seconds;
+      this.stt?.sendAudio(chunk);
+    }
+  }
+
+  // ---------- STT wiring ----------
+
+  /** The normal (single-language) STT callbacks used once a language is set. */
+  private normalSttCallbacks(): SttCallbacks {
+    return {
+      onPartial: (text) => this.onSttPartial(text),
+      onFinal: (text) => this.onSttFinal(text),
+      onSpeechStarted: () => this.resetSilenceTimer(),
+      onError: (err) => console.error(`[call ${this.callId}] STT error:`, err.message),
+    };
+  }
+
+  private onSttPartial(text: string) {
+    if (this.assistantAudioActive && this.isLikelyEcho(text)) return;
+    this.maybeBargeIn("partial", text);
+    this.resetSilenceTimer();
+    this.transport.sendUiEvent({ event: "transcript", role: "user", content: text, partial: true });
+  }
+
+  private onSttFinal(text: string) {
+    // A final that echoes our own speech isn't the caller talking — drop it.
+    if (this.assistantAudioActive && this.isLikelyEcho(text)) return;
+    this.interruptForNewInput();
+    this.enqueueTask(() => this.handleUserText(text, "spoken"));
+  }
+
+  // ---------- bilingual language detection ----------
+
+  /** Open an English + a Chinese stream and route each stream's events through
+   *  detection until the caller's language is resolved, then through the normal
+   *  pipeline for the winning stream. */
+  private async startBilingualDetection(sttProvider: string) {
+    this.detecting = true;
+    const stt = getStt(sttProvider);
+    const langs: Array<"en" | "zh"> = ["en", "zh"];
+    for (const lang of langs) {
+      try {
+        const stream = await stt.start(
+          this.detectionCallbacks(lang),
+          { language: lang === "zh" ? DETECT_CHINESE_LANG : "en" }
+        );
+        this.detectStreams.push({ lang, stream });
+      } catch (err: any) {
+        console.error(`[call ${this.callId}] STT(${lang}) failed to start:`, err?.message ?? err);
+      }
+    }
+    // If neither race stream could start (e.g. no key → mock unavailable), fall
+    // back to a single default stream so the call still functions in English.
+    if (this.detectStreams.length === 0) {
+      this.detecting = false;
+      try {
+        this.stt = await stt.start(this.normalSttCallbacks());
+      } catch (err: any) {
+        console.error(`[call ${this.callId}] STT failed to start:`, err?.message ?? err);
+      }
+    }
+  }
+
+  /** Per-stream callbacks: feed detection while racing, then the normal pipeline
+   *  for the winning stream (the loser is closed at resolution). */
+  private detectionCallbacks(lang: "en" | "zh"): SttCallbacks {
+    return {
+      onPartial: (text) => {
+        if (this.detecting) return; // partials from both streams are too noisy to act on mid-race
+        if (this.callLanguage === lang) this.onSttPartial(text);
+      },
+      onFinal: (text, confidence) => {
+        if (this.detecting) return this.onDetectFinal(lang, text, confidence);
+        if (this.callLanguage === lang) this.onSttFinal(text);
+      },
+      onSpeechStarted: () => this.resetSilenceTimer(),
+      onError: (err) => console.error(`[call ${this.callId}] STT(${lang}) error:`, err.message),
+    };
+  }
+
+  private onDetectFinal(lang: "en" | "zh", text: string, confidence?: number) {
+    if (!this.detecting || !text.trim()) return;
+    if (!this.detectFirstFinals[lang]) this.detectFirstFinals[lang] = { text, confidence: confidence ?? 0 };
+    // Both streams have weighed in → decide immediately; otherwise give the
+    // slower stream a brief window before deciding on what we have.
+    if (this.detectFirstFinals.en && this.detectFirstFinals.zh) {
+      this.decideLanguage();
+    } else if (!this.detectTimer) {
+      this.detectTimer = setTimeout(() => this.decideLanguage(), DETECT_WINDOW_MS);
+    }
+  }
+
+  private decideLanguage() {
+    if (!this.detecting) return;
+    if (this.detectTimer) {
+      clearTimeout(this.detectTimer);
+      this.detectTimer = undefined;
+    }
+    const decision = pickBilingualLanguage(this.detectFirstFinals.en, this.detectFirstFinals.zh);
+    if (decision) this.resolveLanguage(decision.lang, decision.text);
+  }
+
+  private resolveLanguage(lang: "en" | "zh", firstText: string) {
+    if (!this.detecting) return;
+    this.detecting = false;
+    this.callLanguage = lang;
+    const winner = this.detectStreams.find((s) => s.lang === lang);
+    for (const s of this.detectStreams) {
+      if (s.lang !== lang) s.stream.close().catch(() => {});
+    }
+    this.detectStreams = winner ? [winner] : [];
+    this.stt = winner?.stream;
+    if (lang === "zh") this.system += "\n\n" + CHINESE_LOCK_NOTE;
+    console.log(`[call ${this.callId}] language=${lang}`);
+    // Don't lose the first utterance — run it through the normal turn pipeline.
+    if (firstText.trim()) this.onSttFinal(firstText);
   }
 
   private handleMark(name: string) {
@@ -472,9 +622,15 @@ export class CallSession {
     this.state = "ended";
     this.clearSilenceTimer();
     if (this.maxDurationTimer) clearTimeout(this.maxDurationTimer);
+    if (this.detectTimer) clearTimeout(this.detectTimer);
     this.currentAbort.abort();
     try {
       await this.stt?.close();
+      // Close any race stream that isn't the one kept as this.stt (before
+      // resolution both are open; after, the loser was already closed).
+      for (const s of this.detectStreams) {
+        if (s.stream !== this.stt) await s.stream.close().catch(() => {});
+      }
     } catch {
       // ignore
     }

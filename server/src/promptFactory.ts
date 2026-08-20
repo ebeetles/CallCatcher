@@ -136,6 +136,8 @@ export interface PromptFactoryOptions {
   tools: string[];
   /** Extra instructions the operator appended by hand. */
   extraInstructions?: string;
+  /** Serve callers in English or Mandarin, matching the caller's language. */
+  bilingual?: boolean;
 }
 
 /**
@@ -160,6 +162,15 @@ ${PERSONALITY_LINES[opts.personality]}`
 - If the caller is silent or unclear, politely ask them to repeat.
 - If you don't know something, say so honestly and offer to take a message — never invent details, prices, or availability.
 - If asked whether you are a real person, say you are ${business.name}'s automated phone assistant, and stay helpful.`);
+
+  if (opts.bilingual) {
+    sections.push(`# Language (bilingual: English / Mandarin Chinese)
+- Your opening greeting is in English.
+- Then MATCH THE CALLER'S LANGUAGE. If the caller speaks English, continue entirely in English. If the caller speaks Mandarin Chinese, switch immediately and respond entirely in natural, fluent Mandarin (written in Chinese characters) for the rest of the call.
+- Do not mix languages in one reply, and do not translate back and forth — pick the caller's language and stay in it.
+- When speaking Chinese, still follow every rule above: short spoken sentences, one question at a time, and write numbers, times, and prices the natural spoken way (e.g. "四十五块", "九点半").
+- If you truly can't tell which language the caller is using, politely ask in both — "Sorry, are you looking for help in English or Chinese? 请问您需要中文还是英文服务？" — then continue in whichever they choose.`);
+  }
 
   sections.push(`# The business
 Name: ${business.name}
@@ -272,6 +283,16 @@ export function resolveSystemPrompt(systemPrompt: string, business: Pick<Busines
 }
 
 export const ALL_TOOLS = ["take_message", "request_appointment", "transfer_call", "end_call"];
+
+/**
+ * Appended at call time (not stored) for a bilingual receptionist once the
+ * caller's first utterance is detected as Chinese, so the model has an
+ * unambiguous, in-context instruction to stay in Mandarin. The English case
+ * needs no note — English is the default and the caller's text is already
+ * English.
+ */
+export const CHINESE_LOCK_NOTE = `# Detected language: Mandarin Chinese
+The caller is speaking Mandarin Chinese. Respond ONLY in natural, fluent Mandarin (Chinese characters) for the entire rest of this call. Do not switch back to English unless the caller explicitly does.`;
 
 /**
  * Appended at call time (not stored) when the business has a live Google

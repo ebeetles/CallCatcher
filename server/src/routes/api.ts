@@ -145,6 +145,7 @@ const BusinessSchema = z.object({
 
 const ReceptionistSchema = z.object({
   personality: z.enum(["friendly", "professional", "warm", "efficient"]).default("friendly"),
+  bilingual: z.boolean().default(false),
   systemPrompt: z.string().min(1).optional(),
   greeting: z.string().min(1).optional(),
   extraInstructions: z.string().max(4000).optional(),
@@ -418,6 +419,7 @@ export function registerApiRoutes(app: FastifyInstance) {
       personality: p.personality,
       tools: p.tools ?? ALL_TOOLS,
       extraInstructions: p.extraInstructions,
+      bilingual: p.bilingual,
     });
     let aiRefined = false;
     if (p.useAi && factoryAiAvailable()) {
@@ -450,6 +452,7 @@ export function registerApiRoutes(app: FastifyInstance) {
         personality: p.personality,
         tools: p.tools ?? ALL_TOOLS,
         extraInstructions: p.extraInstructions,
+        bilingual: p.bilingual,
       });
       if (p.useAi && factoryAiAvailable()) {
         try {
@@ -466,6 +469,7 @@ export function registerApiRoutes(app: FastifyInstance) {
       systemPrompt,
       greeting: p.greeting ?? buildGreeting(biz, p.personality),
       personality: p.personality,
+      bilingual: p.bilingual,
       voice: p.voice ?? { provider: defaults.tts, voiceId: defaults.tts === "deepgram" ? "aura-2-thalia-en" : defaults.tts === "elevenlabs" ? "21m00Tcm4TlvDq8ikWAM" : "tone-a" },
       llm:
         p.llm ??
@@ -813,6 +817,7 @@ export function registerApiRoutes(app: FastifyInstance) {
       systemPrompt: buildSystemPrompt(biz, { personality: "friendly", tools: ALL_TOOLS }),
       greeting: buildGreeting(biz, "friendly"),
       personality: "friendly",
+      bilingual: false,
       voice: { provider: defaults.tts, voiceId: defaults.tts === "deepgram" ? "aura-2-thalia-en" : "tone-a" },
       llm: {
         provider: defaults.llm,

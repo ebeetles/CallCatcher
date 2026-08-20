@@ -180,6 +180,7 @@ ensureColumn("businesses", "notify_number", "notify_number TEXT");
 // NULL tenant_id = legacy row from before multi-tenancy; adopted at admin signup.
 ensureColumn("businesses", "tenant_id", "tenant_id TEXT REFERENCES tenants(id) ON DELETE CASCADE");
 db.exec("CREATE INDEX IF NOT EXISTS idx_businesses_tenant ON businesses(tenant_id)");
+ensureColumn("receptionists", "bilingual", "bilingual INTEGER NOT NULL DEFAULT 0");
 
 export function newId(prefix: string): string {
   return `${prefix}_${crypto.randomBytes(8).toString("hex")}`;
@@ -430,6 +431,7 @@ function rowToReceptionist(r: any): ReceptionistConfig {
     systemPrompt: r.system_prompt,
     greeting: r.greeting,
     personality: r.personality,
+    bilingual: !!r.bilingual,
     voice: JSON.parse(r.voice_json),
     llm: JSON.parse(r.llm_json),
     sttProvider: r.stt_provider,
@@ -452,8 +454,8 @@ export const receptionists = {
     const tx = db.transaction(() => {
       db.prepare("UPDATE receptionists SET active=0 WHERE business_id=?").run(input.businessId);
       db.prepare(
-        `INSERT INTO receptionists (id,business_id,version,active,system_prompt,greeting,personality,voice_json,llm_json,stt_provider,tools_json,max_call_seconds,created_at)
-         VALUES (?,?,?,1,?,?,?,?,?,?,?,?,?)`
+        `INSERT INTO receptionists (id,business_id,version,active,system_prompt,greeting,personality,bilingual,voice_json,llm_json,stt_provider,tools_json,max_call_seconds,created_at)
+         VALUES (?,?,?,1,?,?,?,?,?,?,?,?,?,?)`
       ).run(
         id,
         input.businessId,
@@ -461,6 +463,7 @@ export const receptionists = {
         input.systemPrompt,
         input.greeting,
         input.personality,
+        input.bilingual ? 1 : 0,
         JSON.stringify(input.voice),
         JSON.stringify(input.llm),
         input.sttProvider,
