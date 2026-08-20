@@ -180,12 +180,15 @@ export default function ReceptionistTab({
                 onChange={(e) => {
                   const on = e.target.checked;
                   setDraft((d) => {
-                    // Chinese speech needs a Chinese-capable voice — ElevenLabs.
-                    const switchVoice = on && d.voiceProvider === "deepgram" && ttsProviders.includes("elevenlabs");
+                    // Chinese speech needs a Chinese-capable voice. Deepgram is
+                    // English-only, so switch to the best available: Azure, then
+                    // ElevenLabs.
+                    const chineseVoice = ttsProviders.includes("azure") ? "azure" : ttsProviders.includes("elevenlabs") ? "elevenlabs" : undefined;
+                    const switchVoice = on && d.voiceProvider === "deepgram" && !!chineseVoice;
                     return {
                       ...d,
                       bilingual: on,
-                      voiceProvider: switchVoice ? "elevenlabs" : d.voiceProvider,
+                      voiceProvider: switchVoice ? chineseVoice! : d.voiceProvider,
                       voiceId: switchVoice ? "" : d.voiceId,
                     };
                   });
@@ -198,7 +201,7 @@ export default function ReceptionistTab({
             </label>
             {draft.bilingual && draft.voiceProvider === "deepgram" ? (
               <div className="note warn" style={{ marginTop: 8, marginBottom: 0 }}>
-                The Deepgram voices only speak English. Pick an ElevenLabs voice under “Voice &amp; brain” so the receptionist can actually speak Mandarin.
+                The Deepgram voices only speak English. Pick an Azure (or ElevenLabs) voice under “Voice &amp; brain” so the receptionist can actually speak Mandarin.
               </div>
             ) : null}
           </Panel>

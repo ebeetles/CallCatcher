@@ -30,6 +30,10 @@ export const config = {
   openaiKey: process.env.OPENAI_API_KEY || "",
   deepgramKey: process.env.DEEPGRAM_API_KEY || "",
   elevenlabsKey: process.env.ELEVENLABS_API_KEY || "",
+  /** Azure Speech (Cognitive Services) — Mandarin-capable TTS for bilingual receptionists. */
+  azureSpeechKey: process.env.AZURE_SPEECH_KEY || "",
+  /** Azure region the Speech resource lives in, e.g. "eastus". */
+  azureSpeechRegion: process.env.AZURE_SPEECH_REGION || "",
   twilioAccountSid: process.env.TWILIO_ACCOUNT_SID || "",
   twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || "",
 
@@ -121,7 +125,7 @@ export function authMode(): AuthMode {
 export interface ProviderStatus {
   stt: { deepgram: boolean; mock: true };
   llm: { anthropic: boolean; openai: boolean; mock: true };
-  tts: { deepgram: boolean; elevenlabs: boolean; mock: true };
+  tts: { deepgram: boolean; elevenlabs: boolean; azure: boolean; mock: true };
   telephony: { twilio: boolean };
   /** Google Calendar OAuth app configured (platform-level). */
   googleCalendar: boolean;
@@ -152,6 +156,7 @@ export function providerStatus(): ProviderStatus {
     tts: {
       deepgram: !!config.deepgramKey && !config.mockProviders,
       elevenlabs: !!config.elevenlabsKey && !config.mockProviders,
+      azure: !!(config.azureSpeechKey && config.azureSpeechRegion) && !config.mockProviders,
       mock: true,
     },
     telephony: { twilio: !!(config.twilioAccountSid && config.twilioAuthToken) },

@@ -6,6 +6,7 @@ import { OpenAiLlm } from "./llm/openai.ts";
 import { MockLlm } from "./llm/mock.ts";
 import { DeepgramTts } from "./tts/deepgram.ts";
 import { ElevenLabsTts } from "./tts/elevenlabs.ts";
+import { AzureTts } from "./tts/azure.ts";
 import { MockTts } from "./tts/mock.ts";
 import { config, providerStatus } from "../config.ts";
 
@@ -23,6 +24,7 @@ const llm: Record<string, LlmProvider> = {
 const tts: Record<string, TtsProvider> = {
   deepgram: new DeepgramTts(),
   elevenlabs: new ElevenLabsTts(),
+  azure: new AzureTts(),
   mock: new MockTts(),
 };
 
@@ -55,6 +57,7 @@ export function listVoices(): Record<string, Array<{ id: string; label: string }
   return {
     deepgram: tts.deepgram.voices(),
     elevenlabs: tts.elevenlabs.voices(),
+    azure: tts.azure.voices(),
     mock: tts.mock.voices(),
   };
 }

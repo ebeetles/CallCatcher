@@ -18,6 +18,8 @@ export const PRICING = {
     deepgramPer1kChars: 0.03,
     // ElevenLabs Flash v2.5 via API credits (approx)
     elevenlabsPer1kChars: 0.05,
+    // Azure Neural TTS standard (~$16/1M chars; F0 tier free to 0.5M/mo)
+    azurePer1kChars: 0.016,
     mockPer1kChars: 0,
   } as Record<string, number>,
   llm: {
